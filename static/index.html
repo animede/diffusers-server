@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DiffusersWEBUI</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="app-header">
+  <h1>DiffusersWEBUI</h1>
+</header>
+
+<div id="status-bar" class="status-bar">
+  <span id="status-text">ステータス取得中...</span>
+  <button id="status-refresh-btn" class="tiny-btn">更新</button>
+  <span class="status-spacer"></span>
+  <label class="unload-label">解放:</label>
+  <button id="unload-t2i-btn" class="tiny-btn secondary">T2I/I2I</button>
+  <button id="unload-edit-btn" class="tiny-btn secondary">Edit</button>
+  <button id="unload-controlnet-btn" class="tiny-btn secondary">ControlNet</button>
+  <button id="unload-layered-btn" class="tiny-btn secondary">Layered</button>
+  <button id="unload-flux2-btn" class="tiny-btn secondary">FLUX.2</button>
+  <button id="unload-zimage-btn" class="tiny-btn secondary">Z-Image</button>
+  <button id="unload-ltx2-btn" class="tiny-btn secondary">LTX-2.3</button>
+  <button id="unload-joyai-btn" class="tiny-btn secondary">JoyAI</button>
+  <button id="unload-all-btn" class="tiny-btn secondary">全て</button>
+</div>
+
+<main class="container">
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="t2i">T2I(テキストから生成)</button>
+    <button class="tab-btn" data-tab="i2i">I2I(画像から生成)</button>
+    <button class="tab-btn" data-tab="edit">Edit(画像編集)</button>
+    <button class="tab-btn" data-tab="controlnet">ControlNet</button>
+    <button class="tab-btn" data-tab="inpaint">Inpaint</button>
+    <button class="tab-btn" data-tab="layered">Layered(レイヤー分解)</button>
+    <button class="tab-btn" data-tab="removebg">背景削除</button>
+    <button class="tab-btn" data-tab="charsheet">キャラシート</button>
+    <button class="tab-btn" data-tab="ltx2">動画(LTX-2.3)</button>
+  </nav>
+
+  <section class="panel tab-panel active" id="tab-t2i">
+    <h2>T2I: テキストから画像生成</h2>
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <form id="t2i-form" class="gen-form">
+          <label>プロンプト
+            <textarea name="prompt" rows="3" required placeholder="生成したい画像の説明を入力してください"></textarea>
+          </label>
+          <div class="llm-btn-row">
+            <button type="button" class="tiny-btn secondary llm-enhance-btn">LLM強化</button>
+            <button type="button" class="tiny-btn secondary llm-translate-btn">英訳</button>
+            <button type="button" class="tiny-btn secondary llm-undo-btn hidden">元に戻す</button>
+          </div>
+          <label class="qwen-only-fields">ネガティブプロンプト
+            <textarea name="negative_prompt" rows="2">lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer fingers, cropped, worst quality, low quality, jpeg artifacts, signature, watermark, username, blurry</textarea>
+          </label>
+          <p class="form-hint qwen-only-fields">Lightning使用時(cfg=1.0)はネガティブプロンプトは効きません。</p>
+          <label>T2Iモデル
+            <select name="model" id="t2i-model-select">
+              <option value="2512">2512(fp8-lightning・既定)</option>
+              <option value="qwen-image">Qwen-Image(無印)</option>
+              <option value="flux2-dev">FLUX.2-dev</option>
+              <option value="zimage-turbo">Z-Image-Turbo(高速・8steps)</option>
+            </select>
+          </label>
+          <p class="form-hint">モデル切替時は別モデルの解放 → 再ロードが走るため、数十秒かかることがあります。</p>
+          <div class="form-grid qwen-only-fields">
+            <label>幅 <input type="number" name="width" value="1328" step="16" min="256" max="2048"></label>
+            <label>高さ <input type="number" name="height" value="1328" step="16" min="256" max="2048"></label>
+            <label>steps <input type="number" name="steps" value="30" min="1" max="100"></label>
+            <label>cfg(true_cfg_scale) <input type="number" name="cfg" value="4.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+            <label>shift(空欄で既定値) <input type="number" name="shift" step="0.1" placeholder="auto"></label>
+          </div>
+          <div class="form-grid flux2-only-fields hidden">
+            <label>幅 <input type="number" name="flux2_width" value="1024" step="64" min="256" max="2048"></label>
+            <label>高さ <input type="number" name="flux2_height" value="1024" step="64" min="256" max="2048"></label>
+            <label>steps <input type="number" name="flux2_steps" value="28" min="1" max="100"></label>
+            <label>guidance_scale <input type="number" name="guidance_scale" value="4.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="flux2_seed" value="-1" step="1"></label>
+          </div>
+          <div class="zimage-only-fields hidden">
+            <label>ネガティブプロンプト(guidance_scale &gt; 0 のときのみ有効)
+              <textarea name="zimage_negative_prompt" rows="2"></textarea>
+            </label>
+            <p class="form-hint">Z-Image-Turboは蒸留モデルです。既定は guidance_scale=0(CFGなし)・8steps。guidance_scale&gt;0にするとネガティブプロンプトが効きますが生成が2倍遅くなります。</p>
+            <div class="form-grid">
+              <label>幅 <input type="number" name="zimage_width" value="1024" step="64" min="256" max="2048"></label>
+              <label>高さ <input type="number" name="zimage_height" value="1024" step="64" min="256" max="2048"></label>
+              <label>steps <input type="number" name="zimage_steps" value="8" min="1" max="100"></label>
+              <label>guidance_scale <input type="number" name="zimage_guidance_scale" value="0.0" step="0.1" min="0" max="20"></label>
+              <label>seed(-1でランダム) <input type="number" name="zimage_seed" value="-1" step="1"></label>
+            </div>
+          </div>
+          <label class="checkbox-row qwen-only-fields">
+            <input type="checkbox" name="lightning">
+            Lightning LoRA を使う(4/8 steps 高速化。cfg=1.0, shift=3.0 に自動調整されます)
+          </label>
+          <button type="submit" class="primary-btn">T2I生成</button>
+        </form>
+        <p class="form-error hidden" id="t2i-error"></p>
+      </div>
+      <div class="gen-col-right">
+        <div class="result-panel" id="t2i-result-panel">
+          <p class="result-placeholder">生成結果はここに表示されます</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-i2i">
+    <h2>I2I: 画像から画像生成</h2>
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <form id="i2i-form" class="gen-form">
+          <label id="i2i-image-label">入力画像
+            <input type="file" name="image" id="i2i-image-input" accept="image/*" required>
+          </label>
+          <p class="form-hint hidden" id="i2i-flux2-image-hint">FLUX.2系選択時は参照画像として複数枚(最大10枚)アップロードできます(strengthではなく参照条件付けで生成します)。</p>
+          <label>プロンプト
+            <textarea name="prompt" rows="3" required placeholder="どのように変化させたいか説明してください"></textarea>
+          </label>
+          <div class="llm-btn-row">
+            <button type="button" class="tiny-btn secondary llm-enhance-btn">LLM強化</button>
+            <button type="button" class="tiny-btn secondary llm-translate-btn">英訳</button>
+            <button type="button" class="tiny-btn secondary llm-undo-btn hidden">元に戻す</button>
+          </div>
+          <label class="qwen-only-fields">ネガティブプロンプト
+            <textarea name="negative_prompt" rows="2">lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer fingers, cropped, worst quality, low quality, jpeg artifacts, signature, watermark, username, blurry</textarea>
+          </label>
+          <p class="form-hint qwen-only-fields">Lightning使用時(cfg=1.0)はネガティブプロンプトは効きません。</p>
+          <label>T2Iモデル
+            <select name="model" id="i2i-model-select">
+              <option value="2512">2512(fp8-lightning・既定)</option>
+              <option value="qwen-image">Qwen-Image(無印)</option>
+              <option value="flux2-dev">FLUX.2-dev</option>
+              <option value="zimage-turbo">Z-Image-Turbo(高速・8steps)</option>
+            </select>
+          </label>
+          <p class="form-hint">モデル切替時は別モデルの解放 → 再ロードが走るため、数十秒かかることがあります。</p>
+          <div class="form-grid qwen-only-fields">
+            <label>strength <input type="number" name="strength" value="0.6" step="0.05" min="0" max="1"></label>
+            <label>steps <input type="number" name="steps" value="30" min="1" max="100"></label>
+            <label>cfg(true_cfg_scale) <input type="number" name="cfg" value="4.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+            <label>shift(空欄で既定値) <input type="number" name="shift" step="0.1" placeholder="auto"></label>
+          </div>
+          <div class="form-grid flux2-only-fields hidden">
+            <label>幅 <input type="number" name="flux2_width" value="1024" step="64" min="256" max="2048"></label>
+            <label>高さ <input type="number" name="flux2_height" value="1024" step="64" min="256" max="2048"></label>
+            <label>steps <input type="number" name="flux2_steps" value="28" min="1" max="100"></label>
+            <label>guidance_scale <input type="number" name="guidance_scale" value="4.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="flux2_seed" value="-1" step="1"></label>
+          </div>
+          <div class="zimage-only-fields hidden">
+            <label>ネガティブプロンプト(guidance_scale &gt; 0 のときのみ有効)
+              <textarea name="zimage_negative_prompt" rows="2"></textarea>
+            </label>
+            <p class="form-hint">Z-Image-Turboは蒸留モデルです。既定は guidance_scale=0(CFGなし)・8steps。</p>
+            <div class="form-grid">
+              <label>strength <input type="number" name="zimage_strength" value="0.6" step="0.05" min="0" max="1"></label>
+              <label>幅 <input type="number" name="zimage_width" value="1024" step="64" min="256" max="2048"></label>
+              <label>高さ <input type="number" name="zimage_height" value="1024" step="64" min="256" max="2048"></label>
+              <label>steps <input type="number" name="zimage_steps" value="8" min="1" max="100"></label>
+              <label>guidance_scale <input type="number" name="zimage_guidance_scale" value="0.0" step="0.1" min="0" max="20"></label>
+              <label>seed(-1でランダム) <input type="number" name="zimage_seed" value="-1" step="1"></label>
+            </div>
+          </div>
+          <label class="checkbox-row qwen-only-fields">
+            <input type="checkbox" name="lightning">
+            Lightning LoRA を使う(4/8 steps 高速化。cfg=1.0, shift=3.0 に自動調整されます)
+          </label>
+          <button type="submit" class="primary-btn">I2I生成</button>
+        </form>
+        <p class="form-error hidden" id="i2i-error"></p>
+      </div>
+      <div class="gen-col-right">
+        <div class="result-panel" id="i2i-result-panel">
+          <p class="result-placeholder">生成結果はここに表示されます</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-edit">
+    <h2>Edit: 画像編集</h2>
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <form id="edit-form" class="gen-form">
+          <label>モデル
+            <select name="model" id="edit-model-select">
+              <option value="qwen-edit-2511">Qwen-Image-Edit-2511(既定)</option>
+              <option value="joyai-edit-plus">JoyAI-Edit-Plus(マルチ参照合成)</option>
+            </select>
+          </label>
+          <p class="form-hint">モデル切替時は別モデルの解放 → 再ロードが走るため、数十秒かかることがあります。</p>
+          <label>参照画像(最大3枚。複数選択可)
+            <input type="file" name="images" accept="image/*" multiple required>
+          </label>
+          <label>プロンプト
+            <textarea name="prompt" rows="3" required placeholder="編集内容を指示してください"></textarea>
+          </label>
+          <div class="llm-btn-row">
+            <button type="button" class="tiny-btn secondary llm-enhance-btn">LLM強化</button>
+            <button type="button" class="tiny-btn secondary llm-translate-btn">英訳</button>
+            <button type="button" class="tiny-btn secondary llm-undo-btn hidden">元に戻す</button>
+          </div>
+          <label>ネガティブプロンプト
+            <textarea name="negative_prompt" rows="2">lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer fingers, cropped, worst quality, low quality, jpeg artifacts, signature, watermark, username, blurry</textarea>
+          </label>
+          <p class="form-hint qwen-edit-only-fields">Lightning使用時(cfg=1.0)はネガティブプロンプトは効きません。</p>
+          <div class="form-grid qwen-edit-only-fields">
+            <label>steps <input type="number" name="steps" value="4" min="1" max="50"></label>
+            <label>cfg(true_cfg_scale) <input type="number" name="cfg" value="1.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+            <label>shift(空欄で既定値) <input type="number" name="shift" step="0.1" placeholder="auto"></label>
+            <label>幅(空欄で自動推定) <input type="number" name="width" step="16" placeholder="auto"></label>
+            <label>高さ(空欄で自動推定) <input type="number" name="height" step="16" placeholder="auto"></label>
+          </div>
+          <p class="panel-note qwen-edit-only-fields">
+            48GB専有では標準解像度(自動推定、1024²相当)でOOMする場合があります。逼迫時は
+            幅・高さに 640 を明示してください(実測: 39GB程度に収まることを確認済み)。
+          </p>
+          <label class="checkbox-row qwen-edit-only-fields">
+            <input type="checkbox" name="lightning" checked>
+            Lightning 4steps LoRA を使う(既定ON。charsheet と同じ steps=4, true_cfg_scale=1.0, shift=3.0)
+          </label>
+          <div class="form-grid joyai-only-fields hidden">
+            <label>steps <input type="number" name="joyai_steps" value="30" min="1" max="100"></label>
+            <label>guidance_scale <input type="number" name="joyai_guidance_scale" value="4.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="joyai_seed" value="-1" step="1"></label>
+            <label>幅(空欄で自動推定) <input type="number" name="joyai_width" step="16" placeholder="auto"></label>
+            <label>高さ(空欄で自動推定) <input type="number" name="joyai_height" step="16" placeholder="auto"></label>
+          </div>
+          <p class="form-hint joyai-only-fields hidden">
+            JoyAI-Edit-Plusは複数参照画像(最大3枚)を同時に渡し、プロンプトで指示した編集・合成が
+            できます(例: 人物とアイテムの2枚を渡し「人物にアイテムを持たせる」)。既定は
+            steps=30・guidance_scale=4.0。幅・高さ未指定時は最後の参照画像のサイズから自動推定されます。
+          </p>
+          <button type="submit" class="primary-btn">Edit生成</button>
+        </form>
+        <p class="form-error hidden" id="edit-error"></p>
+      </div>
+      <div class="gen-col-right">
+        <div class="result-panel" id="edit-result-panel">
+          <p class="result-placeholder">生成結果はここに表示されます</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-controlnet">
+    <h2>ControlNet: 制御画像(canny/depth/pose等)による生成</h2>
+    <p class="panel-note">
+      無印 Qwen-Image + InstantX/Qwen-Image-ControlNet-Union。制御画像はご自身で用意してください
+      (canny/depth/pose/soft_edge に対応)。canny だけはアップロード画像から自動生成できます。
+    </p>
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <form id="controlnet-form" class="gen-form">
+          <label>制御画像
+            <input type="file" name="control_image" id="controlnet-image-input" accept="image/*" required>
+          </label>
+          <div class="canny-tools">
+            <button type="button" id="controlnet-canny-btn" class="tiny-btn secondary">
+              アップロード画像からCannyを自動生成して制御画像に使う
+            </button>
+            <span id="controlnet-canny-status" class="canny-status"></span>
+          </div>
+          <img id="controlnet-preview" class="control-preview hidden" alt="制御画像プレビュー">
+          <label>プロンプト
+            <textarea name="prompt" rows="3" required placeholder="生成したい画像の説明を入力してください"></textarea>
+          </label>
+          <div class="llm-btn-row">
+            <button type="button" class="tiny-btn secondary llm-enhance-btn">LLM強化</button>
+            <button type="button" class="tiny-btn secondary llm-translate-btn">英訳</button>
+            <button type="button" class="tiny-btn secondary llm-undo-btn hidden">元に戻す</button>
+          </div>
+          <label>ネガティブプロンプト
+            <textarea name="negative_prompt" rows="2">lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer fingers, cropped, worst quality, low quality, jpeg artifacts, signature, watermark, username, blurry</textarea>
+          </label>
+          <p class="form-hint">Lightning使用時(cfg=1.0)はネガティブプロンプトは効きません。</p>
+          <div class="form-grid">
+            <label>control_type(表示用メタ情報)
+              <select name="control_type">
+                <option value="canny">canny</option>
+                <option value="depth">depth</option>
+                <option value="pose">pose</option>
+                <option value="soft_edge">soft_edge</option>
+              </select>
+            </label>
+            <label>conditioning_scale
+              <input type="number" name="controlnet_conditioning_scale" value="1.0" step="0.05" min="0" max="2">
+            </label>
+            <label>幅(空欄で制御画像に合わせる。48GB専有でOOM時は640推奨) <input type="number" name="width" step="16" placeholder="auto"></label>
+            <label>高さ(空欄で制御画像に合わせる。48GB専有でOOM時は640推奨) <input type="number" name="height" step="16" placeholder="auto"></label>
+            <label>steps <input type="number" name="steps" value="30" min="1" max="100"></label>
+            <label>cfg(true_cfg_scale) <input type="number" name="cfg" value="4.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+          </div>
+          <button type="submit" class="primary-btn">ControlNet生成</button>
+        </form>
+        <p class="form-error hidden" id="controlnet-error"></p>
+      </div>
+      <div class="gen-col-right">
+        <div class="result-panel" id="controlnet-result-panel">
+          <p class="result-placeholder">生成結果はここに表示されます</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-inpaint">
+    <h2>Inpaint: マスク領域のみ再生成</h2>
+    <p class="panel-note">
+      無印 Qwen-Image + InstantX/Qwen-Image-ControlNet-Inpainting(既定)、または
+      Z-Image-Turbo(マスクインペイント)。白 = 再生成する領域。
+      下のキャンバスにブラシでマスクを描くか、マスク画像を直接アップロードしてください。
+    </p>
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <form id="inpaint-form" class="gen-form">
+          <label>モデル
+            <select name="model" id="inpaint-model-select">
+              <option value="qwen-controlnet">Qwen ControlNet(既定)</option>
+              <option value="zimage-turbo">Z-Image-Turbo</option>
+            </select>
+          </label>
+          <label>元画像
+            <input type="file" name="image" id="inpaint-image-input" accept="image/*" required>
+          </label>
+
+          <div id="inpaint-mask-editor" class="mask-editor hidden">
+            <div class="mask-canvas-wrap">
+              <canvas id="inpaint-base-canvas"></canvas>
+              <canvas id="inpaint-mask-canvas"></canvas>
+            </div>
+            <div class="mask-tools">
+              <label class="mask-tool-label">ブラシサイズ
+                <input type="range" id="mask-brush-size" min="4" max="120" value="30">
+              </label>
+              <button type="button" id="mask-mode-brush" class="tiny-btn active-tool">ブラシ(白=編集領域)</button>
+              <button type="button" id="mask-mode-eraser" class="tiny-btn secondary">消しゴム</button>
+              <button type="button" id="mask-clear-btn" class="tiny-btn secondary">クリア</button>
+            </div>
+          </div>
+
+          <label>マスク画像を直接アップロード(任意。指定時はキャンバス描画より優先)
+            <input type="file" name="mask_image_upload" id="inpaint-mask-upload" accept="image/*">
+          </label>
+
+          <label>プロンプト
+            <textarea name="prompt" rows="3" required placeholder="編集内容を指示してください(例: 服の色を変える)"></textarea>
+          </label>
+          <div class="llm-btn-row">
+            <button type="button" class="tiny-btn secondary llm-enhance-btn">LLM強化</button>
+            <button type="button" class="tiny-btn secondary llm-translate-btn">英訳</button>
+            <button type="button" class="tiny-btn secondary llm-undo-btn hidden">元に戻す</button>
+          </div>
+          <label class="qwen-inpaint-only-fields">ネガティブプロンプト
+            <textarea name="negative_prompt" rows="2">lowres, bad anatomy, bad hands, missing fingers, extra digits, fewer fingers, cropped, worst quality, low quality, jpeg artifacts, signature, watermark, username, blurry</textarea>
+          </label>
+          <p class="form-hint qwen-inpaint-only-fields">Lightning使用時(cfg=1.0)はネガティブプロンプトは効きません。</p>
+          <div class="form-grid qwen-inpaint-only-fields">
+            <label>conditioning_scale
+              <input type="number" name="controlnet_conditioning_scale" value="1.0" step="0.05" min="0" max="2">
+            </label>
+            <label>steps <input type="number" name="steps" value="30" min="1" max="100"></label>
+            <label>cfg(true_cfg_scale) <input type="number" name="cfg" value="4.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+          </div>
+          <div class="zimage-inpaint-only-fields hidden">
+            <label>ネガティブプロンプト(guidance_scale &gt; 0 のときのみ有効)
+              <textarea name="zimage_negative_prompt" rows="2"></textarea>
+            </label>
+            <div class="form-grid">
+              <label>strength <input type="number" name="zimage_strength" value="1.0" step="0.05" min="0" max="1"></label>
+              <label>幅 <input type="number" name="zimage_width" value="1024" step="64" min="256" max="2048"></label>
+              <label>高さ <input type="number" name="zimage_height" value="1024" step="64" min="256" max="2048"></label>
+              <label>steps <input type="number" name="zimage_steps" value="8" min="1" max="100"></label>
+              <label>guidance_scale <input type="number" name="zimage_guidance_scale" value="0.0" step="0.1" min="0" max="20"></label>
+              <label>seed(-1でランダム) <input type="number" name="zimage_seed" value="-1" step="1"></label>
+            </div>
+          </div>
+          <button type="submit" class="primary-btn">Inpaint生成</button>
+        </form>
+        <p class="form-error hidden" id="inpaint-error"></p>
+      </div>
+      <div class="gen-col-right">
+        <div class="result-panel" id="inpaint-result-panel">
+          <p class="result-placeholder">生成結果はここに表示されます</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-layered">
+    <h2>Layered: Qwen-Image-Layered による RGBA レイヤー分解</h2>
+    <p class="panel-note">
+      1枚の画像を N 枚の RGBA レイヤー(透過PNG)に分解します。プロンプトは空欄でもよく、
+      その場合はモデル内蔵の自動キャプションが使われます(追加ダウンロード不要)。
+      既定は fp8-lightning(4steps/cfg2.5/shift1、ComfyUIの「Qwen Image Layered Lightning4」
+      ワークフローと同一設定)。<code>QWENIMG_LAYERED_QUANT=gguf-*</code> 選択時は
+      LoRA非対応のため 50steps/cfg4.0 にフォールバックします。
+    </p>
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <form id="layered-form" class="gen-form">
+          <label>入力画像
+            <input type="file" name="image" id="layered-image-input" accept="image/*" required>
+          </label>
+          <img id="layered-input-preview" class="control-preview hidden" alt="入力画像プレビュー">
+          <label>プロンプト(空欄で自動キャプション)
+            <textarea name="prompt" rows="2" placeholder="空欄可(モデルの自動キャプションを使用)"></textarea>
+          </label>
+          <div class="llm-btn-row">
+            <button type="button" class="tiny-btn secondary llm-enhance-btn">LLM強化</button>
+            <button type="button" class="tiny-btn secondary llm-translate-btn">英訳</button>
+            <button type="button" class="tiny-btn secondary llm-undo-btn hidden">元に戻す</button>
+          </div>
+          <label>ネガティブプロンプト
+            <textarea name="negative_prompt" rows="1"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>レイヤー数
+              <input type="number" name="layers" value="4" min="1" max="16" step="1">
+            </label>
+            <label>resolution(640 または 1024)
+              <select name="resolution">
+                <option value="640" selected>640</option>
+                <option value="1024">1024</option>
+              </select>
+            </label>
+            <label>steps(空欄で既定値) <input type="number" name="steps" step="1" placeholder="auto"></label>
+            <label>cfg(true_cfg_scale、空欄で既定値) <input type="number" name="cfg" step="0.1" placeholder="auto"></label>
+            <label>shift(空欄で既定値) <input type="number" name="shift" step="0.1" placeholder="auto"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" name="cfg_normalize">
+            cfg_normalize を有効にする
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="use_en_prompt" checked>
+            自動キャプションを英語で行う(use_en_prompt。プロンプト欄が空のときのみ影響)
+          </label>
+          <button type="submit" class="primary-btn">Layered生成</button>
+        </form>
+        <p class="form-error hidden" id="layered-error"></p>
+      </div>
+      <div class="gen-col-right">
+        <div id="layered-result" class="layered-result hidden">
+          <h3>直近の結果</h3>
+          <div class="layered-composite-wrap checkerboard-bg">
+            <img id="layered-composite-img" alt="合成プレビュー">
+          </div>
+          <div id="layered-composite-download-row" class="result-download-row"></div>
+          <div id="layered-layers-row" class="layered-layers-row"></div>
+        </div>
+        <div class="result-panel" id="layered-result-placeholder">
+          <p class="result-placeholder">生成結果はここに表示されます</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-removebg">
+    <h2>背景削除: 画像から背景を除去(透過PNG)</h2>
+    <p class="panel-note">
+      rembg(isnet-general-use、ONNX、GPU不使用)で背景を除去し、被写体のみを残した
+      RGBA(透過)PNGを生成します。生成ロックとは無関係のため、他の生成中でも実行できます。
+      初回実行時のみモデル(約179MB)を自動ダウンロードします。
+    </p>
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <form id="removebg-form" class="gen-form">
+          <label>入力画像
+            <input type="file" name="image" id="removebg-image-input" accept="image/*" required>
+          </label>
+          <img id="removebg-input-preview" class="control-preview hidden" alt="入力画像プレビュー">
+          <button type="submit" class="primary-btn">背景削除を実行</button>
+        </form>
+        <p class="form-error hidden" id="removebg-error"></p>
+      </div>
+      <div class="gen-col-right">
+        <div class="result-panel" id="removebg-result-panel">
+          <p class="result-placeholder">生成結果はここに表示されます</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-charsheet">
+    <h2>キャラシート: 1枚のキャラクター画像から8方向ビューを生成</h2>
+    <p class="panel-note">
+      Qwen-Image-Edit-2511(bf16)+ Lightning / Multiple-angles LoRA 併用(旧charsheet方式の
+      再現、既定 bf16-group)で生成します。方式は環境変数 DS_CHARSHEET_METHOD で切替可能
+      (bf16-group / bf16-adapters / fp8-fuse / prompt-only)。
+    </p>
+
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <div id="cs-upload-panel">
+          <h3>1. 画像アップロード</h3>
+          <div id="cs-dropzone" class="dropzone">
+            <p id="cs-dropzone-text">ここに画像をドラッグ&ドロップ<br>または クリックして選択</p>
+            <img id="cs-preview-image" class="preview-image hidden" alt="プレビュー">
+            <input type="file" id="cs-file-input" accept="image/*" class="hidden" data-gd-skip="1">
+          </div>
+
+          <div id="cs-split-section" class="split-section hidden">
+            <p id="cs-split-message" class="split-message"></p>
+            <div id="cs-split-grid" class="split-grid"></div>
+            <p class="split-use-whole">
+              <a href="#" id="cs-use-whole-link">シート全体をそのまま使う</a>
+            </p>
+          </div>
+
+          <div class="form-row">
+            <label for="cs-seed-input">seed(任意、デフォルト 0)</label>
+            <input type="number" id="cs-seed-input" value="0" step="1">
+          </div>
+
+          <div class="form-row">
+            <button id="cs-generate-btn" class="primary-btn" disabled>キャラクターシート生成</button>
+          </div>
+
+          <p id="cs-error-message" class="form-error hidden"></p>
+          <p id="cs-status-message" class="status-message hidden"></p>
+
+          <div id="cs-overall-progress" class="progress-bar-wrap hidden">
+            <div class="progress-bar-label">
+              <span class="progress-bar-phase">生成中</span>
+              <span class="progress-bar-count" id="cs-overall-progress-count"></span>
+            </div>
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" id="cs-overall-progress-fill"></div>
+            </div>
+          </div>
+          <div id="cs-step-progress" class="progress-bar-wrap hidden">
+            <div class="progress-bar-label">
+              <span class="progress-bar-phase" id="cs-step-progress-phase">-</span>
+              <span class="progress-bar-count" id="cs-step-progress-count"></span>
+            </div>
+            <div class="progress-bar-track" id="cs-step-progress-track">
+              <div class="progress-bar-fill" id="cs-step-progress-fill"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="gen-col-right">
+        <div id="cs-views-panel">
+          <h3>2. 8方向ビュー</h3>
+          <div id="cs-views-grid" class="views-grid"></div>
+        </div>
+
+        <div id="cs-sheet-panel" class="hidden">
+          <h3>3. キャラクターシート</h3>
+          <img id="cs-sheet-image" class="sheet-image" alt="キャラクターシート">
+          <div class="form-row">
+            <button id="cs-download-zip-btn">一括ダウンロード (ZIP)</button>
+            <button id="cs-download-sheet-btn" class="secondary">シート画像のみダウンロード</button>
+            <button id="cs-remove-bg-all-btn" class="secondary">全方向の背景を削除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-ltx2">
+    <h2>動画生成(LTX-2.3、動画+音声)</h2>
+    <p class="form-hint">蒸留モデル(8steps・guidance_scale=1.0固定=CFGなし)。フレーム数は8n+1、幅・高さは32の倍数を指定してください。48GB専有環境では自動的にtransformerのgroup offloadが有効になり生成が遅くなります(DS_LTX2_OFFLOADで明示指定可)。長尺動画(10秒超〜最大361フレーム=15秒)は既定構成ではVRAM不足になるため、サーバを DS_LTX2_OFFLOAD=group DS_LTX2_TE_QUANT=nf4 で起動してください(実測: 15秒動画がピーク43GB・生成36秒で成功)。</p>
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <nav class="tabs" style="margin-bottom:12px;">
+          <button type="button" class="tab-btn active" data-subtab="ltx2-t2v">T2V(テキストから動画)</button>
+          <button type="button" class="tab-btn" data-subtab="ltx2-i2v">I2V(画像から動画)</button>
+          <button type="button" class="tab-btn" data-subtab="ltx2-flf">FLF(最初と最後の画像から動画)</button>
+          <button type="button" class="tab-btn" data-subtab="ltx2-keyframes">Keyframes(任意キーフレーム条件付け)</button>
+          <button type="button" class="tab-btn" data-subtab="ltx2-ia2v">IA2V(画像+音声→リップシンク)</button>
+          <button type="button" class="tab-btn" data-subtab="ltx2-v2a">V2A(動画→音声付与)</button>
+          <button type="button" class="tab-btn" data-subtab="ltx2-iclora">IC-LoRA(動画編集/MergeGreen)</button>
+        </nav>
+
+        <form id="ltx2-t2v-form" class="gen-form ltx2-subtab active" data-subtab="ltx2-t2v">
+          <label>プロンプト
+            <textarea name="prompt" rows="3" required placeholder="生成したい動画の説明を入力してください"></textarea>
+          </label>
+          <div class="llm-btn-row">
+            <button type="button" class="tiny-btn secondary llm-enhance-btn">LLM強化</button>
+            <button type="button" class="tiny-btn secondary llm-translate-btn">英訳</button>
+            <button type="button" class="tiny-btn secondary llm-undo-btn hidden">元に戻す</button>
+          </div>
+          <label>ネガティブプロンプト(蒸留モデルでは実質無効)
+            <textarea name="negative_prompt" rows="2"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>幅 <input type="number" name="width" value="512" step="32" min="256" max="1280"></label>
+            <label>高さ <input type="number" name="height" value="320" step="32" min="256" max="768"></label>
+            <label>フレーム数(8n+1) <input type="number" name="num_frames" value="25" step="8" min="9" max="361"></label>
+            <label>fps <input type="number" name="fps" value="24" min="1" max="60"></label>
+            <label>steps <input type="number" name="steps" value="8" min="1" max="50"></label>
+            <label>guidance_scale <input type="number" name="guidance_scale" value="1.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+            <label>音声出力
+              <select name="audio_out">
+                <option value="on" selected>あり(生成音声をmux)</option>
+                <option value="off">なし(無音mp4)</option>
+              </select>
+            </label>
+            <label class="checkbox-row"><input type="checkbox" name="upscale" value="1"> 2xアップスケール(latent upsampler、出力解像度が2倍)</label>
+          </div>
+          <button type="submit" class="primary-btn">T2V生成</button>
+        </form>
+        <p class="form-error hidden" id="ltx2-t2v-error"></p>
+
+        <form id="ltx2-i2v-form" class="gen-form ltx2-subtab hidden" data-subtab="ltx2-i2v">
+          <label>入力画像
+            <input type="file" name="image" id="ltx2-i2v-image-input" accept="image/*" required>
+          </label>
+          <label>プロンプト
+            <textarea name="prompt" rows="3" required placeholder="どのように動かしたいか説明してください"></textarea>
+          </label>
+          <label>ネガティブプロンプト(蒸留モデルでは実質無効)
+            <textarea name="negative_prompt" rows="2"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>幅 <input type="number" name="width" value="512" step="32" min="256" max="1280"></label>
+            <label>高さ <input type="number" name="height" value="320" step="32" min="256" max="768"></label>
+            <label>フレーム数(8n+1) <input type="number" name="num_frames" value="25" step="8" min="9" max="361"></label>
+            <label>fps <input type="number" name="fps" value="24" min="1" max="60"></label>
+            <label>steps <input type="number" name="steps" value="8" min="1" max="50"></label>
+            <label>guidance_scale <input type="number" name="guidance_scale" value="1.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+            <label>音声出力
+              <select name="audio_out">
+                <option value="on" selected>あり(生成音声をmux)</option>
+                <option value="off">なし(無音mp4)</option>
+              </select>
+            </label>
+            <label class="checkbox-row"><input type="checkbox" name="upscale" value="1"> 2xアップスケール(latent upsampler、出力解像度が2倍)</label>
+          </div>
+          <button type="submit" class="primary-btn">I2V生成</button>
+        </form>
+        <p class="form-error hidden" id="ltx2-i2v-error"></p>
+
+        <form id="ltx2-flf-form" class="gen-form ltx2-subtab hidden" data-subtab="ltx2-flf">
+          <label>最初の画像
+            <input type="file" name="first_image" id="ltx2-flf-first-image-input" accept="image/*" required>
+          </label>
+          <label>最後の画像
+            <input type="file" name="last_image" id="ltx2-flf-last-image-input" accept="image/*" required>
+          </label>
+          <label>プロンプト
+            <textarea name="prompt" rows="3" required placeholder="最初から最後までどう変化するか説明してください"></textarea>
+          </label>
+          <label>ネガティブプロンプト(蒸留モデルでは実質無効)
+            <textarea name="negative_prompt" rows="2"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>幅 <input type="number" name="width" value="512" step="32" min="256" max="1280"></label>
+            <label>高さ <input type="number" name="height" value="320" step="32" min="256" max="768"></label>
+            <label>フレーム数(8n+1) <input type="number" name="num_frames" value="25" step="8" min="9" max="361"></label>
+            <label>fps <input type="number" name="fps" value="25" min="1" max="60"></label>
+            <label>steps <input type="number" name="steps" value="8" min="1" max="50"></label>
+            <label>guidance_scale <input type="number" name="guidance_scale" value="1.0" step="0.1" min="0" max="20"></label>
+            <label>strength(条件付け強度) <input type="number" name="strength" value="0.7" step="0.05" min="0" max="1"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+            <label>音声出力
+              <select name="audio_out">
+                <option value="on" selected>あり(生成音声をmux)</option>
+                <option value="off">なし(無音mp4)</option>
+              </select>
+            </label>
+          </div>
+          <button type="submit" class="primary-btn">FLF生成</button>
+        </form>
+        <p class="form-error hidden" id="ltx2-flf-error"></p>
+
+        <form id="ltx2-keyframes-form" class="gen-form ltx2-subtab hidden" data-subtab="ltx2-keyframes">
+          <label>キーフレーム画像(複数選択可、選択順に条件付けされます)
+            <input type="file" name="images" id="ltx2-keyframes-images-input" accept="image/*" multiple required>
+          </label>
+          <label>フレーム位置(indices、カンマ区切り、画像と同数。負値=末尾からの指定。例: 0,45,-1)
+            <input type="text" name="indices" id="ltx2-keyframes-indices-input" placeholder="0,45,-1" required>
+          </label>
+          <label>強度(strengths、カンマ区切り。省略時は0.7を全画像に適用。1個だけ指定でも全画像適用)
+            <input type="text" name="strengths" id="ltx2-keyframes-strengths-input" placeholder="0.7">
+          </label>
+          <label>プロンプト
+            <textarea name="prompt" rows="3" required placeholder="キーフレーム間でどう変化するか説明してください"></textarea>
+          </label>
+          <label>ネガティブプロンプト(蒸留モデルでは実質無効)
+            <textarea name="negative_prompt" rows="2"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>幅 <input type="number" name="width" value="512" step="32" min="256" max="1280"></label>
+            <label>高さ <input type="number" name="height" value="320" step="32" min="256" max="768"></label>
+            <label>フレーム数(8n+1) <input type="number" name="num_frames" value="25" step="8" min="9" max="361"></label>
+            <label>fps <input type="number" name="fps" value="25" min="1" max="60"></label>
+            <label>steps <input type="number" name="steps" value="8" min="1" max="50"></label>
+            <label>guidance_scale <input type="number" name="guidance_scale" value="1.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+            <label>音声出力
+              <select name="audio_out">
+                <option value="on" selected>あり(生成音声をmux)</option>
+                <option value="off">なし(無音mp4)</option>
+              </select>
+            </label>
+          </div>
+          <button type="submit" class="primary-btn">Keyframes生成</button>
+        </form>
+        <p class="form-error hidden" id="ltx2-keyframes-error"></p>
+
+        <form id="ltx2-ia2v-form" class="gen-form ltx2-subtab hidden" data-subtab="ltx2-ia2v">
+          <label>入力画像(話者の顔)
+            <input type="file" name="image" id="ltx2-ia2v-image-input" accept="image/*" required>
+          </label>
+          <label>入力音声(wav)
+            <input type="file" name="audio" id="ltx2-ia2v-audio-input" accept="audio/*" required>
+          </label>
+          <label>プロンプト(空欄なら英語の既定文「話している人物」を使用)
+            <textarea name="prompt" rows="3" placeholder="A person looks directly at the camera and talks, natural lip movements synced to speech, photorealistic, static camera, indoor lighting"></textarea>
+          </label>
+          <label>ネガティブプロンプト(空欄なら既定文を使用)
+            <textarea name="negative_prompt" rows="2" placeholder="blurry, distorted face, static mouth, low quality"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>幅 <input type="number" name="width" value="512" step="32" min="256" max="1280"></label>
+            <label>高さ <input type="number" name="height" value="320" step="32" min="256" max="768"></label>
+            <label>フレーム数(0=音声長から自動) <input type="number" name="num_frames" value="0" step="8" min="0" max="241"></label>
+            <label>fps <input type="number" name="fps" value="25" min="1" max="60"></label>
+            <label>steps <input type="number" name="steps" value="8" min="1" max="50"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+            <label>音声出力
+              <select name="audio_out">
+                <option value="original" selected>原音(入力wavをそのままmux)</option>
+                <option value="vocoder">再合成音(ボコーダ出力)</option>
+                <option value="none">なし(無音mp4)</option>
+              </select>
+            </label>
+          </div>
+          <button type="submit" class="primary-btn">IA2V生成</button>
+        </form>
+        <p class="form-error hidden" id="ltx2-ia2v-error"></p>
+
+        <form id="ltx2-v2a-form" class="gen-form ltx2-subtab hidden" data-subtab="ltx2-v2a">
+          <label>入力動画(音声は無視され、生成音声で差し替えられます)
+            <input type="file" name="video" id="ltx2-v2a-video-input" accept="video/*" required>
+          </label>
+          <label>プロンプト(空欄なら英語の既定文「情景に合った環境音」を使用)
+            <textarea name="prompt" rows="3" placeholder="ambient sound and effects that match the scene, realistic audio"></textarea>
+          </label>
+          <label>ネガティブプロンプト(空欄なら既定文を使用)
+            <textarea name="negative_prompt" rows="2" placeholder="music, voice, speech, low quality, noise"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>幅 <input type="number" name="width" value="512" step="32" min="256" max="1280"></label>
+            <label>高さ <input type="number" name="height" value="320" step="32" min="256" max="768"></label>
+            <label>フレーム数(0=動画全長から自動、上限257) <input type="number" name="num_frames" value="0" step="8" min="0" max="257"></label>
+            <label>steps <input type="number" name="steps" value="8" min="1" max="50"></label>
+            <label>guidance_scale <input type="number" name="guidance_scale" value="1.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+          </div>
+          <button type="submit" class="primary-btn">V2A生成</button>
+        </form>
+        <p class="form-error hidden" id="ltx2-v2a-error"></p>
+
+        <form id="ltx2-iclora-form" class="gen-form ltx2-subtab hidden" data-subtab="ltx2-iclora">
+          <label>入力動画(参照動画。中央部を緑マスクして編集指示に沿って生成し直します)
+            <input type="file" name="video" id="ltx2-iclora-video-input" accept="video/*" required>
+          </label>
+          <label>プロンプト(シーン内で何が変わるかを記述。例: "the apple turns into an orange")
+            <textarea name="prompt" rows="3" placeholder="the apple turns into an orange" required></textarea>
+          </label>
+          <label>ネガティブプロンプト(空欄なら既定文を使用)
+            <textarea name="negative_prompt" rows="2" placeholder="static, no change, low quality, blurry, distorted"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>マスクモード
+              <select name="mask_mode">
+                <option value="middle" selected>middle(中央部を自動で緑マスク)</option>
+                <option value="prefilled">prefilled(緑マスク済み動画をそのまま使用)</option>
+              </select>
+            </label>
+            <label>マスク開始フレーム(空欄=中央1/3の自動計算) <input type="number" name="mask_start" min="0" step="1"></label>
+            <label>マスク終了フレーム(空欄=中央1/3の自動計算) <input type="number" name="mask_end" min="0" step="1"></label>
+            <label>参照strength <input type="number" name="ref_strength" value="1.0" step="0.05" min="0" max="1"></label>
+          </div>
+          <div class="form-grid">
+            <label>幅 <input type="number" name="width" value="512" step="32" min="256" max="1280"></label>
+            <label>高さ <input type="number" name="height" value="320" step="32" min="256" max="768"></label>
+            <label>フレーム数(0=動画全長から自動、上限257) <input type="number" name="num_frames" value="0" step="8" min="0" max="257"></label>
+            <label>frame_rate <input type="number" name="fps" value="25" step="1" min="1" max="60"></label>
+            <label>steps <input type="number" name="steps" value="8" min="1" max="50"></label>
+            <label>guidance_scale <input type="number" name="guidance_scale" value="1.0" step="0.1" min="0" max="20"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+          </div>
+          <button type="submit" class="primary-btn">IC-LoRA生成</button>
+        </form>
+        <p class="form-error hidden" id="ltx2-iclora-error"></p>
+      </div>
+      <div class="gen-col-right">
+        <div class="result-panel" id="ltx2-result-panel">
+          <p class="result-placeholder">生成結果はここに表示されます</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="gallery-panel">
+    <h2>ギャラリー</h2>
+    <div class="gallery-toolbar">
+      <span id="gallery-count">0 件</span>
+      <button id="gallery-clear-btn" class="tiny-btn secondary">ギャラリーをクリア</button>
+    </div>
+    <div id="gallery-grid" class="gallery-grid"></div>
+  </section>
+
+</main>
+
+<div id="lightbox" class="lightbox hidden">
+  <span id="lightbox-close" class="lightbox-close">&times;</span>
+  <img id="lightbox-image" class="lightbox-image" alt="拡大表示">
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

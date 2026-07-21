@@ -1,0 +1,49 @@
+# DiffusersWEBUI — requirements
+#
+# NOTE: diffusers must be installed from git (not the PyPI release) because
+# several pipelines used here (Z-Image, LTX-2.3, Qwen-Image Layered, etc.)
+# are not yet in a tagged release. Versions in comments are what this project
+# was verified against (checked via `pip list` in the development venv).
+#
+#   pip install "git+https://github.com/huggingface/diffusers"
+#
+# Install PyTorch separately, matching your CUDA version, e.g.:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+#
+# Then install the rest of this file:
+#   pip install -r requirements.txt
+
+# --- Core ML / diffusion stack ---
+# diffusers>=0.40.0.dev0 (git version required, see note above)
+transformers>=5.1.0
+accelerate>=1.12.0
+safetensors>=0.8.0
+huggingface_hub>=1.23.0
+peft>=0.18.0
+bitsandbytes>=0.49.0
+gguf>=0.17.1
+sentencepiece>=0.2.1
+einops>=0.8.1
+
+# torch / torchvision / torchaudio: install separately for your CUDA version
+# (verified with torch==2.9.0, torchvision==0.24.0, torchaudio==2.9.0, CUDA 12.8 build)
+
+# --- Web server ---
+fastapi>=0.104.1
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+
+# --- Image / video processing ---
+pillow>=10.4.0
+numpy>=2.2.6
+scipy>=1.16.3
+opencv-python-headless>=4.12.0
+rembg>=2.0.68
+
+# --- HTTP client (LLM prompt-assist feature, optional at runtime) ---
+requests>=2.31.0
+
+# ffmpeg is required as a system binary (not a Python package) for video+audio
+# muxing in the LTX-2.3 video endpoints. Install via your OS package manager
+# (e.g. `apt install ffmpeg`). Without it, video endpoints still work but
+# fall back to returning video-only mp4 + separate audio wav files.
