@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-charsheet 専用: Edit の「bf16-group」変種(旧 ~/charsheet 完全再現)のロード・
+charsheet 専用: Edit の「bf16-group」変種(旧 /home/animede/charsheet 完全再現)のロード・
 排他管理(CLAUDE.md 33番)。
 
-目的: ~/charsheet/pipeline.py と数値的に完全同等の品質を得ること。
+目的: /home/animede/charsheet/pipeline.py と数値的に完全同等の品質を得ること。
 edit_angles_bf16.py(fp8-base-adapters、既定の "bf16-adapters" 方式)は transformer の
 ベースを fp8_e4m3fn へストレージ圧縮してから adapter を乗せる設計だったが、ユーザー決定
 により「fp8化を一切行わず bf16 のまま常駐させ、代わりに block-level group offloading で
@@ -107,7 +107,7 @@ def _check_ram_guard() -> None:
 
 def _load_edit_angles_bf16group_group_locked() -> None:
     """Edit(bf16-group)transformer をロードし、QwenImageEditPlusPipeline を構築する
-    (共有コンポーネントを再利用)。旧 ~/charsheet/pipeline.py
+    (共有コンポーネントを再利用)。旧 /home/animede/charsheet/pipeline.py
     _load_pipeline_locked() の "group" モード分岐(行373-424)を忠実に再現する。
 
     ロード順序: transformer を **CPU へ** streaming ロード(bf16、fuseしない、fp8化もしない)

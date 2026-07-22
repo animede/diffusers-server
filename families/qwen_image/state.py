@@ -87,7 +87,7 @@ edit_angles_group = {
     "lightning_merged": False,  # 常に True(fuse済みで無効化不可)。edit_groupと形を揃える
 }
 
-# charsheet 専用の fp8-base-adapters 変種(旧 ~/charsheet 方式への復元)。
+# charsheet 専用の fp8-base-adapters 変種(旧 /home/animede/charsheet 方式への復元)。
 # bf16 2511 transformer をロードしてから fuse せずベースのみ fp8_e4m3fn ストレージ化し、
 # その上に Lightning + Multiple-angles を「adapter として適用」する:
 # load_lora_weights ×2 -> set_adapters(["lightning","angles"], adapter_weights=[1.0, 1.0])。
@@ -111,7 +111,7 @@ edit_angles_bf16_group = {
     "lightning_merged": False,  # adapter方式なので常に False(disable_lora()で無効化可能)
 }
 
-# charsheet 専用の "bf16-group" 変種(旧 ~/charsheet 完全再現、CLAUDE.md 33番、
+# charsheet 専用の "bf16-group" 変種(旧 /home/animede/charsheet 完全再現、CLAUDE.md 33番、
 # 新既定)。bf16 2511 transformer をfuse・fp8化せずCPUへstreamingロードし、Lightning +
 # Multiple-angles を adapter として適用した上で、transformer を block-level group
 # offloading(旧 pipeline.py _apply_group_offload_to_transformer() の完全移植、

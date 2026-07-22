@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-背景除去(rembg / ISNet)。
+背景除去(rembg / ISNet)。旧 charsheet/bg.py の移植(ロジック無変更)。
 
 briaai/RMBG-1.4 の transformers remote code は transformers 5.x と非互換のため、
 rembg パッケージ(isnet-general-use, ONNX)を使用する。
 モデルは遅延ロードのシングルトン(初回のみ ~179MB を ~/.u2net にダウンロード)。
+rembg は comfy-env(venv の親環境)に既存で、venv からも import 可能なことを確認済み
+(pip install はしない、REBUILD_PLAN §3.4)。
 """
 import threading
 

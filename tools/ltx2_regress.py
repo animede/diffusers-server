@@ -3,7 +3,7 @@
 LTX-2.3(動画+音声生成)統合可否のスタンドアロン回帰確認スクリプト。
 
 目的: ローカルの ComfyUI形式 scaled-fp8 チェックポイント
-(既定 `~/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-fp8.safetensors`、28GB)を
+(/home/animede/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-fp8.safetensors、28GB)を
 venv の diffusers(0.40.0.dev0)の LTX2Pipeline で読み込み、蒸留8ステップの短い動画を
 1本生成できるか確認する。families/ や app.py には一切触れない(調査専用の使い捨てスクリプト)。
 
@@ -60,15 +60,12 @@ import time
 import torch
 from safetensors import safe_open
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _REPO_ROOT)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 実際に実行する場合は、手元の ComfyUI モデルディレクトリのパスに差し替えること
-# (既定は DS_COMFYUI_DIR / ~/ComfyUI と同じ規約)。
-CKPT_PATH = os.path.expanduser("~/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-fp8.safetensors")
-GEMMA_PATH = os.path.expanduser("~/ComfyUI/models/text_encoders/gemma_3_12B_it.safetensors")
-CFG_DIR = os.path.join(_REPO_ROOT, "outputs", "_ltx23_cfg")
-OUT_DIR = os.path.join(_REPO_ROOT, "outputs", "_ltx2_test")
+CKPT_PATH = "/home/animede/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-fp8.safetensors"
+GEMMA_PATH = "/home/animede/ComfyUI/models/text_encoders/gemma_3_12B_it.safetensors"
+CFG_DIR = "/tmp/claude-1000/-home-animede-diffusers-server/004ec3eb-8a16-41bb-90bc-6905fddac044/scratchpad/ltx23_cfg"
+OUT_DIR = "/tmp/claude-1000/-home-animede-diffusers-server/004ec3eb-8a16-41bb-90bc-6905fddac044/scratchpad/ltx2_test"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 

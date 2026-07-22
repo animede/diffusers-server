@@ -2,7 +2,7 @@
 """
 Z-Image 生成本体(T2I / I2I / Inpaint)。
 
-抽出元: ~/Z-image-diffusers/api_server.py の api_t2i() / api_i2i() /
+抽出元: /home/animede/Z-image-diffusers/api_server.py の api_t2i() / api_i2i() /
 api_edit()(base64 JSON API)。この統合サーバでは他ファミリーと同じ規約
 (画像は前処理済みで渡される・outputs/保存とメタデータ組み立てまでこのモジュールが担当)に
 合わせ、base64エンコードは行わない。

@@ -24,6 +24,7 @@
   <button id="unload-zimage-btn" class="tiny-btn secondary">Z-Image</button>
   <button id="unload-ltx2-btn" class="tiny-btn secondary">LTX-2.3</button>
   <button id="unload-joyai-btn" class="tiny-btn secondary">JoyAI</button>
+  <button id="unload-mageflow-btn" class="tiny-btn secondary">Mage-Flow</button>
   <button id="unload-all-btn" class="tiny-btn secondary">全て</button>
 </div>
 
@@ -39,6 +40,7 @@
     <button class="tab-btn" data-tab="removebg">背景削除</button>
     <button class="tab-btn" data-tab="charsheet">キャラシート</button>
     <button class="tab-btn" data-tab="ltx2">動画(LTX-2.3)</button>
+    <button class="tab-btn" data-tab="mageflow">Mage-Flow</button>
   </nav>
 
   <section class="panel tab-panel active" id="tab-t2i">
@@ -805,6 +807,90 @@
       </div>
       <div class="gen-col-right">
         <div class="result-panel" id="ltx2-result-panel">
+          <p class="result-placeholder">生成結果はここに表示されます</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-mageflow">
+    <h2>Mage-Flow(Microsoft、軽量4.1B・T2I/Edit)</h2>
+    <p class="form-hint">別プロセスのラッパーサービス(venv-mageflow、既定ポート8602)経由で動作します。未起動の場合は <code>./run_mageflow.sh</code> で起動してください。バリアント: Base(30steps)/ RL(T2I 20・Edit 30steps、既定)/ Turbo(4steps・cfg1.0)。解像度は512〜2048(16の倍数)。プロンプトは内蔵コンテンツゲートで検査され、拒否時はプレースホルダ画像が返ります。生成画像にはGaussian-Shading透かしが常に埋め込まれます。</p>
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <nav class="tabs" style="margin-bottom:12px;">
+          <button type="button" class="tab-btn active" data-subtab="mageflow-t2i">T2I(テキストから生成)</button>
+          <button type="button" class="tab-btn" data-subtab="mageflow-edit">Edit(参照画像編集)</button>
+        </nav>
+
+        <form id="mageflow-t2i-form" class="gen-form mageflow-subtab active" data-subtab="mageflow-t2i">
+          <label>プロンプト
+            <textarea name="prompt" rows="3" required placeholder="生成したい画像の説明を入力してください"></textarea>
+          </label>
+          <div class="llm-btn-row">
+            <button type="button" class="tiny-btn secondary llm-enhance-btn">LLM強化</button>
+            <button type="button" class="tiny-btn secondary llm-translate-btn">英訳</button>
+            <button type="button" class="tiny-btn secondary llm-undo-btn hidden">元に戻す</button>
+          </div>
+          <label>ネガティブプロンプト(cfg>1のとき有効。Turboでは実質無効)
+            <textarea name="negative_prompt" rows="2"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>モデル
+              <select name="model">
+                <option value="rl" selected>RL(既定・20steps)</option>
+                <option value="base">Base(30steps)</option>
+                <option value="turbo">Turbo(4steps・最速)</option>
+              </select>
+            </label>
+            <label>幅 <input type="number" name="width" value="1024" step="16" min="512" max="2048"></label>
+            <label>高さ <input type="number" name="height" value="1024" step="16" min="512" max="2048"></label>
+            <label>steps(空欄でモデル既定) <input type="number" name="steps" min="1" max="100" placeholder="auto"></label>
+            <label>cfg(空欄でモデル既定) <input type="number" name="cfg" step="0.1" min="0" max="20" placeholder="auto"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+          </div>
+          <label class="checkbox-row"><input type="checkbox" name="exclusive" checked> 排他制御(他の生成と同時実行しない。外すと他ファミリーの生成と並行実行できるがVRAM合算オーバー時はOOMのリスク)</label>
+          <button type="submit" class="primary-btn">T2I生成</button>
+        </form>
+        <p class="form-error hidden" id="mageflow-t2i-error"></p>
+
+        <form id="mageflow-edit-form" class="gen-form mageflow-subtab hidden" data-subtab="mageflow-edit">
+          <label>参照画像(複数選択可、最大3枚)
+            <input type="file" name="image" id="mageflow-edit-image-input" accept="image/*" multiple required>
+          </label>
+          <label>編集指示プロンプト
+            <textarea name="prompt" rows="3" required placeholder="どのように編集したいか指示してください(例: 背景を街並みに変える)"></textarea>
+          </label>
+          <div class="llm-btn-row">
+            <button type="button" class="tiny-btn secondary llm-enhance-btn">LLM強化</button>
+            <button type="button" class="tiny-btn secondary llm-translate-btn">英訳</button>
+            <button type="button" class="tiny-btn secondary llm-undo-btn hidden">元に戻す</button>
+          </div>
+          <label>ネガティブプロンプト(cfg>1のとき有効。Turboでは実質無効)
+            <textarea name="negative_prompt" rows="2"></textarea>
+          </label>
+          <div class="form-grid">
+            <label>モデル
+              <select name="model">
+                <option value="rl" selected>RL(既定・30steps)</option>
+                <option value="base">Base(30steps)</option>
+                <option value="turbo">Turbo(4steps・最速)</option>
+              </select>
+            </label>
+            <label>max_size(長辺。幅/高さ未指定時に有効) <input type="number" name="max_size" value="1024" step="16" min="512" max="2048"></label>
+            <label>幅(空欄で自動) <input type="number" name="width" step="16" min="512" max="2048" placeholder="auto"></label>
+            <label>高さ(空欄で自動) <input type="number" name="height" step="16" min="512" max="2048" placeholder="auto"></label>
+            <label>steps(空欄でモデル既定) <input type="number" name="steps" min="1" max="100" placeholder="auto"></label>
+            <label>cfg(空欄でモデル既定) <input type="number" name="cfg" step="0.1" min="0" max="20" placeholder="auto"></label>
+            <label>seed(-1でランダム) <input type="number" name="seed" value="-1" step="1"></label>
+          </div>
+          <label class="checkbox-row"><input type="checkbox" name="exclusive" checked> 排他制御(他の生成と同時実行しない。外すと他ファミリーの生成と並行実行できるがVRAM合算オーバー時はOOMのリスク)</label>
+          <button type="submit" class="primary-btn">Edit生成</button>
+        </form>
+        <p class="form-error hidden" id="mageflow-edit-error"></p>
+      </div>
+      <div class="gen-col-right">
+        <div class="result-panel" id="mageflow-result-panel">
           <p class="result-placeholder">生成結果はここに表示されます</p>
         </div>
       </div>

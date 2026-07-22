@@ -10,16 +10,14 @@ GPU 127W / util 58% / CPU 1コア飽和という症状から、以下を切り�
 
 joyai_regress.py の load_pipeline()(component-wise device_map="cuda"、RAM安全版)を流用。
 """
-import os
 import sys
 import time
 
 import torch
 from PIL import Image
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(_REPO_ROOT, "tools"))
-sys.path.insert(0, _REPO_ROOT)
+sys.path.insert(0, "/home/animede/diffusers-server/tools")
+sys.path.insert(0, "/home/animede/diffusers-server")
 
 from joyai_regress import load_pipeline, PORTRAIT_PATH  # noqa: E402
 

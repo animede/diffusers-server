@@ -559,7 +559,7 @@ def run_edit_angles(req: dict, src_images: list) -> dict:
 
 def run_edit_angles_bf16(req: dict, src_images: list) -> dict:
     """charsheet 専用: Edit(fp8-base-adapters、Lightning + Multiple-angles を adapter として
-    weight=1.0 で同時適用)での生成(旧 ~/charsheet 方式)。
+    weight=1.0 で同時適用)での生成(旧 /home/animede/charsheet 方式)。
 
     run_edit_angles() とのちがい: このグループは transformer をfuseせず、ベースのみ
     fp8ストレージ化した上に LoRA adapter を2本(lightning, angles)重ねて適用する
@@ -652,12 +652,12 @@ def run_edit_angles_bf16(req: dict, src_images: list) -> dict:
 
 
 def run_edit_angles_bf16group(req: dict, src_images: list) -> dict:
-    """charsheet 専用: Edit(bf16-group、旧 ~/charsheet 完全再現、CLAUDE.md 33番、
+    """charsheet 専用: Edit(bf16-group、旧 /home/animede/charsheet 完全再現、CLAUDE.md 33番、
     新既定)での生成。
 
     run_edit_angles_bf16() とのちがい: このグループは transformer をfuseもfp8化も
     行わず、bf16のまま block-level group offloading(families/qwen_image/
-    edit_angles_bf16group.py)で GPU/CPU を入れ替える。旧 ~/charsheet/
+    edit_angles_bf16group.py)で GPU/CPU を入れ替える。旧 /home/animede/charsheet/
     pipeline.py の "group" モードは text_encoder を常時GPU常駐のままにする設計
     (offload_all_components=False、_apply_group_offload_to_transformer() 行323-330)
     だったため、本方式では DS_EDIT_TE_OFFLOAD による text_encoder CPU退避スワップは
@@ -737,13 +737,27 @@ def run_edit_angles_bf16group(req: dict, src_images: list) -> dict:
 
 
 def run_controlnet(req: dict, ctrl_img: Image.Image) -> dict:
-    """抽出元: app.py generate_controlnet()。ctrl_img は未リサイズ(このモジュール内でリサイズする)。"""
+    """抽出元: app.py generate_controlnet()。ctrl_img は未リサイズ(このモジュール内でリサイズする)。
+
+    TE(text_encoder) device mismatch 対策(2026-07-21、実機報告に基づき修正: CLAUDE.md
+    参照)。ControlNetパイプライン(controlnet.py の get_controlnet_pipeline())は
+    T2I/I2I/Editと同一の共有text_encoderインスタンス(state.shared["text_encoder"])を
+    使う(CLAUDE.md 8番)。run_i2i()/run_edit() 等はTE CPU退避(should_offload_edit_
+    text_encoder、既定auto)により、pipe(...) 完了後にこの共有インスタンスをCPUへ
+    退避したまま返すことがある。run_controlnet() 自身はTE退避を行わないため、この
+    保険呼び出しが無いと直前がi2i/edit等だった場合に text_encoder がCPUに残ったまま
+    pipe(...) を呼んでしまい、`RuntimeError: Expected all tensors to be on the same
+    device` になる(_execution_device 解決の罠は core.optimize.ensure_text_encoder_on_gpu
+    のdocstring参照。run_t2i()/run_i2i()/run_edit() 等の全run_*関数が持つ「保険としての
+    ensure_text_encoder_on_gpu() 呼び出し」パターンと同じもの)。
+    """
     w = _round16(req["width"]) if req.get("width") else _round16(ctrl_img.width)
     h = _round16(req["height"]) if req.get("height") else _round16(ctrl_img.height)
     if (w, h) != ctrl_img.size:
         ctrl_img = ctrl_img.resize((w, h), Image.LANCZOS)
 
     pipe = controlnet_mod.get_controlnet_pipeline()
+    ensure_text_encoder_on_gpu(pipe)
     generator, used_seed = make_generator(req.get("seed", -1))
 
     _reset_vram_stats()
@@ -787,7 +801,12 @@ def run_controlnet(req: dict, ctrl_img: Image.Image) -> dict:
 
 
 def run_inpaint(req: dict, src_image: Image.Image, mask_img: Image.Image) -> dict:
-    """抽出元: app.py generate_inpaint()。"""
+    """抽出元: app.py generate_inpaint()。
+
+    TE device mismatch対策はrun_controlnet()と同じ理由(共有text_encoderを使う
+    ControlNet系パイプラインのため、直前呼び出しのCPU退避を引き継がないよう保険で
+    ensure_text_encoder_on_gpu()を呼ぶ。run_controlnet()のdocstring参照)。
+    """
     w = _round16(src_image.width)
     h = _round16(src_image.height)
     if (w, h) != src_image.size:
@@ -796,6 +815,7 @@ def run_inpaint(req: dict, src_image: Image.Image, mask_img: Image.Image) -> dic
         mask_img = mask_img.resize((w, h), Image.NEAREST)
 
     pipe = controlnet_mod.get_controlnet_inpaint_pipeline()
+    ensure_text_encoder_on_gpu(pipe)
     generator, used_seed = make_generator(req.get("seed", -1))
 
     _reset_vram_stats()
@@ -861,7 +881,11 @@ def run_canny(image: Image.Image, low_threshold: int = 100, high_threshold: int 
 
 
 def run_layered(req: dict, src_image: Image.Image) -> dict:
-    """抽出元: app.py generate_layered()。src_image は .convert("RGBA") 済みを渡すこと。"""
+    """抽出元: app.py generate_layered()。src_image は .convert("RGBA") 済みを渡すこと。
+
+    TE device mismatch対策はrun_controlnet()と同じ理由(Layeredのtext_encoder/
+    tokenizerも共有インスタンスを再利用するため。run_controlnet()のdocstring参照)。
+    """
     resolution = req.get("resolution", LAYERED_DEFAULT_RESOLUTION)
     layers = req.get("layers", LAYERED_DEFAULT_LAYERS)
     if resolution not in LAYERED_VALID_RESOLUTIONS:
@@ -870,6 +894,7 @@ def run_layered(req: dict, src_image: Image.Image) -> dict:
         raise ValueError("layers は 1〜16 の範囲で指定してください")
 
     pipe = layered_mod.get_layered_pipeline()
+    ensure_text_encoder_on_gpu(pipe)
     lightning_merged = state.layered_group["lightning_merged"]
 
     steps = req.get("steps")

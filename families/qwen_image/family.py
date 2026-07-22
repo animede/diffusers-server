@@ -16,7 +16,7 @@ mode に対応するロード関数(core.registry.FamilyRegistry.load() 経由�
                           として適用する「fp8-base-adapters」方式)
   "edit_angles_bf16group" -> edit_angles_bf16group.get_edit_angles_bf16group_pipeline()
                           (charsheet専用・新既定、CLAUDE.md 33番。旧
-                          ~/charsheet 方式の完全再現: bf16 transformer を
+                          /home/animede/charsheet 方式の完全再現: bf16 transformer を
                           fuse・fp8化せずロードし、Lightning/Multiple-angles を adapter
                           として適用した上で block-level group offloading で
                           GPU/CPU入れ替えする「bf16-group」方式)

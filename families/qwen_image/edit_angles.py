@@ -11,7 +11,7 @@ charsheet 専用: Edit の「fp8-lightning-angles」変種のロード・排他�
   -> Lightning LoRA fuse(core.loaders.fuse_lightning_and_extra_lora_and_cast_to_fp8 内で
      fuse_lora_into_transformer を1回目呼び出し)
   -> Multiple-angles LoRA fuse(同関数内で2回目、adapter_name="angles_fuse", weight=1.0。
-     旧 ~/charsheet/pipeline.py _apply_loras() の
+     旧 /home/animede/charsheet/pipeline.py _apply_loras() の
      pipe.set_adapters(["lightning", "angles"], adapter_weights=[1.0, 1.0]) と
      同じ強度で重みに永続 fuse する)
   -> enable_layerwise_casting(fp8_e4m3fn) でストレージ圧縮

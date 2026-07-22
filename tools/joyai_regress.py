@@ -39,7 +39,6 @@ import hashlib
 import os
 import subprocess
 import sys
-import tempfile
 import time
 
 import torch
@@ -52,13 +51,10 @@ CACHE_DIR_GLOB = os.path.expanduser(
     "~/.cache/huggingface/hub/models--jdopensource--JoyAI-Image-Edit-Plus-Diffusers"
 )
 
-# 実際に実行する場合は、手元の参照画像パスに差し替えること(例:
-# ComfyUI の output ディレクトリや本サーバの outputs/ 配下の生成物など)。
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PORTRAIT_PATH = os.path.expanduser("~/ComfyUI/output/RemoveBG-result_00003_.png")
-APPLE_PATH = os.path.join(_REPO_ROOT, "outputs", "t2i_20260721_134949_a49636ab.png")
+PORTRAIT_PATH = "/home/animede/ComfyUI/output/RemoveBG-result_00003_.png"
+APPLE_PATH = "/home/animede/diffusers-server/outputs/t2i_20260721_134949_a49636ab.png"
 
-OUTPUT_DIR = os.path.join(_REPO_ROOT, "outputs")
+OUTPUT_DIR = "/home/animede/diffusers-server/outputs"
 
 SEED = 12345
 NUM_INFERENCE_STEPS = 30
@@ -498,7 +494,7 @@ def phase2b():
     return {"load_time_s": load_time, "fp8_cast_time_s": t_cast, "test1": r1, "test2": r2}
 
 
-LOCKFILE = os.path.join(tempfile.gettempdir(), "joyai_regress.lock")
+LOCKFILE = "/tmp/claude-1000/-home-animede-diffusers-server/004ec3eb-8a16-41bb-90bc-6905fddac044/scratchpad/joyai_regress.lock"
 
 
 def _pid_alive(pid):

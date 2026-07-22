@@ -239,7 +239,7 @@ def apply_group_offload_to_transformer(transformer, num_blocks: int = 1) -> None
 
 def apply_group_offload_to_transformer_full(transformer) -> dict:
     """transformer を block-level group offloading で GPU/CPU 入れ替える(旧
-    ~/charsheet/pipeline.py の _apply_group_offload_to_transformer()
+    /home/animede/charsheet/pipeline.py の _apply_group_offload_to_transformer()
     (行282-334)の完全移植、"bf16-group" 方式専用)。
 
     apply_group_offload_to_transformer()(このファイル上部の簡易版、num_blocks のみ
@@ -249,7 +249,7 @@ def apply_group_offload_to_transformer_full(transformer) -> dict:
     transformer.enable_group_offload() に一言一句同じ引数構成で渡す。既存の簡易版は
     他の呼び出し元(GGUF等の "group" オフロードモード)に影響するため変更しない。
 
-    抽出元: ~/charsheet/pipeline.py の
+    抽出元: /home/animede/charsheet/pipeline.py の
     _apply_group_offload_to_transformer()(行282-334)。ロジック・既定値とも無変更
     (offload_all_components 分岐は "bf16-group" では常に False 相当 = vae/text_encoder
     は呼び出し側で別途 GPU 常駐させる。48GB環境では group_lowvram 相当の text_encoder

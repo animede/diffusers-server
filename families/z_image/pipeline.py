@@ -3,7 +3,7 @@
 ZImagePipeline のロード(bf16/bnb-4bit ビルダー + offload/attention/compile 適用)。
 I2I / Inpaint パイプラインは base の components から遅延構築する。
 
-抽出元: ~/Z-image-diffusers/pipeline_manager.py
+抽出元: /home/animede/Z-image-diffusers/pipeline_manager.py
   - MODEL_ID / DEFAULT_STEPS / DEFAULT_GUIDANCE_SCALE(行53-57)
   - _build_bf16() / _build_bnb_4bit() / PRECISION_BUILDERS(行154-184)
   - _apply_vae_tiling()(行328-341)

@@ -1136,6 +1136,157 @@ def prompt_translate(req: PromptLLMRequest):
 
 
 # ============================================================================
+# Mage-Flow プロキシ(2026-07-22追加、CLAUDE.md 50番)
+#
+# Mage-Flow はバージョン衝突(torch 2.13 / transformers 5.5 / flash-attn 必須)のため
+# 本体プロセスに載せられず、専用venv(venv-mageflow/)の別プロセス
+# (mageflow_service/app_mageflow.py、DS_MAGEFLOW_URL 既定 http://127.0.0.1:8602)で動く。
+# ここは core/mageflow.py 経由の純粋なHTTP転送のみ(registry.load() は呼ばない —
+# Mage-Flow のモデルはプロセス外にあり、FamilyRegistry の排他unload機構の対象外)。
+#
+# 排他制御はリクエストごとに選択式(exclusive パラメータ、既定 true):
+#   - exclusive=true : core.gpu.generation_lock を非ブロッキング取得してから転送
+#     (取得失敗は409。_generate_or_409() と同じ流儀)。同一GPUを共有する他ファミリーの
+#     生成と VRAM ピークが重ならないようにする既定動作。逆方向(他ファミリー生成中は
+#     Mage-Flow が409になる/Mage-Flow 生成中は他ファミリーが409になる)も同じロック
+#     1本で担保される。
+#   - exclusive=false: ロックを取らず即転送(並行実行を許可)。Mage-Flow は4.1B・
+#     ピーク18-20GB程度なので、96GB機で空きVRAMに余裕がある場合はユーザーの明示
+#     選択で他の生成と並行できる。VRAM合算がオーバーする組み合わせを選ぶと
+#     どちらかがCUDA OOMで失敗するリスクはユーザー持ち。
+# ============================================================================
+from core import mageflow as mageflow_client  # noqa: E402
+
+
+def _mageflow_errors_to_http(exc: Exception) -> HTTPException:
+    """core/mageflow.py の例外をHTTPレスポンスへ変換する(LLM連携の502変換と同じ流儀)。"""
+    if isinstance(exc, mageflow_client.MageFlowConnectionError):
+        return HTTPException(status_code=502, detail=str(exc))
+    if isinstance(exc, mageflow_client.MageFlowServiceError):
+        # ラッパー側のバリデーション(400)や生成失敗(500)はステータスごと透過する
+        return HTTPException(status_code=exc.status_code, detail=exc.detail)
+    return HTTPException(status_code=500, detail=f"Mage-Flowプロキシで予期しないエラー: {exc}")
+
+
+def _mageflow_forward_with_exclusivity(exclusive: bool, forward_fn):
+    """exclusive=true なら generation_lock を非ブロッキング取得してから転送する。
+
+    _generate_or_409() と同じ409応答パターンだが、registry.load() は呼ばない
+    (Mage-Flow はプロセス外のため FamilyRegistry のロード/排他unload対象ではない)。
+    ロック保持中は他ファミリーの生成が409になり、逆に他ファミリー生成中は
+    こちらが409になる(全ファミリー横断ロック1本の効果をそのまま利用)。
+    """
+    from core import gpu
+
+    if not exclusive:
+        try:
+            return forward_fn()
+        except (mageflow_client.MageFlowConnectionError, mageflow_client.MageFlowServiceError) as exc:
+            raise _mageflow_errors_to_http(exc)
+    if not gpu.generation_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409, detail="別の生成が実行中です。しばらく待ってから再試行してください。"
+        )
+    try:
+        return forward_fn()
+    except (mageflow_client.MageFlowConnectionError, mageflow_client.MageFlowServiceError) as exc:
+        raise _mageflow_errors_to_http(exc)
+    finally:
+        gpu.generation_lock.release()
+
+
+class MageFlowT2IRequest(BaseModel):
+    prompt: str
+    negative_prompt: Optional[str] = None
+    width: int = 1024
+    height: int = 1024
+    steps: Optional[int] = None  # 未指定はバリアント既定(base30/rl20/turbo4)
+    cfg: Optional[float] = None  # 未指定はバリアント既定(base/rl 5.0, turbo 1.0)
+    seed: int = -1
+    model: str = "rl"  # "base" | "rl" | "turbo"
+    exclusive: bool = True  # 既定で他の生成と排他(上のコメント参照)
+
+
+@app.post("/api/mageflow/t2i")
+def mageflow_t2i(req: MageFlowT2IRequest):
+    payload = req.model_dump()
+    exclusive = payload.pop("exclusive")
+
+    def _forward():
+        meta = mageflow_client.forward_t2i(payload)
+        meta["exclusive"] = exclusive
+        _record_last_generation(meta)
+        return meta
+
+    return _mageflow_forward_with_exclusivity(exclusive, _forward)
+
+
+@app.post("/api/mageflow/edit")
+async def mageflow_edit(
+    image: List[UploadFile] = File(...),
+    prompt: str = Form(...),
+    negative_prompt: str = Form(""),
+    steps: Optional[int] = Form(None),
+    cfg: Optional[float] = Form(None),
+    seed: int = Form(-1),
+    max_size: int = Form(1024),
+    width: Optional[int] = Form(None),
+    height: Optional[int] = Form(None),
+    model: str = Form("rl"),
+    exclusive: bool = Form(True),
+):
+    # アップロードをメモリへ読み込んでからラッパーへ multipart 転送する
+    # (EXIF正規化・RGB変換等の前処理はラッパー側 mageflow_service/app_mageflow.py が行う)。
+    files = []
+    for up in image:
+        data = await up.read()
+        files.append(("image", (up.filename or "image.png", data, up.content_type or "image/png")))
+    form_data = {
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "seed": str(seed),
+        "max_size": str(max_size),
+        "model": model,
+    }
+    if steps is not None:
+        form_data["steps"] = str(steps)
+    if cfg is not None:
+        form_data["cfg"] = str(cfg)
+    if width is not None:
+        form_data["width"] = str(width)
+    if height is not None:
+        form_data["height"] = str(height)
+
+    def _forward():
+        meta = mageflow_client.forward_edit(form_data, files)
+        meta["exclusive"] = exclusive
+        _record_last_generation(meta)
+        return meta
+
+    return _mageflow_forward_with_exclusivity(exclusive, _forward)
+
+
+@app.get("/api/mageflow/status")
+def mageflow_status():
+    try:
+        return mageflow_client.forward_status()
+    except mageflow_client.MageFlowConnectionError as exc:
+        # ステータスは「未起動」を200で返す(UIのステータスバーが8秒ごとにポーリング
+        # するため、未起動状態を毎回502エラー扱いにしない)。
+        return {"service": "mageflow", "available": False, "detail": str(exc)}
+    except mageflow_client.MageFlowServiceError as exc:
+        raise _mageflow_errors_to_http(exc)
+
+
+@app.post("/api/mageflow/unload")
+def mageflow_unload():
+    try:
+        return mageflow_client.forward_unload()
+    except (mageflow_client.MageFlowConnectionError, mageflow_client.MageFlowServiceError) as exc:
+        raise _mageflow_errors_to_http(exc)
+
+
+# ============================================================================
 # charsheet(Phase 3。apps/charsheet/ 側のルーターを /api/charsheet 接頭辞で統合)
 # ============================================================================
 app.include_router(charsheet_router, prefix="/api/charsheet")

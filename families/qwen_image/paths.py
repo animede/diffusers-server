@@ -111,7 +111,7 @@ EDIT_LORA_LIGHTNING_HF_FILE = "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.s
 
 # --- Edit: Multiple-angles LoRA(charsheet の fp8-lightning-angles 変種専用) ---
 # 2509世代向けにComfyUIで配布されている多アングルLoRA(charsheet旧実装
-# ~/charsheet/pipeline.py の LORA_ANGLES_PATH と同一ファイル)。
+# /home/animede/charsheet/pipeline.py の LORA_ANGLES_PATH と同一ファイル)。
 # キーは既に PEFT 形式(lora_A/lora_B、"transformer_blocks." から始まりプレフィックス無し)
 # であることを実機確認済み(core.loaders.fuse_lora_into_transformer のdocstring参照)。
 EDIT_LORA_ANGLES_PATH = os.path.join(
@@ -145,8 +145,8 @@ T2I_GGUF_CONFIG_REPO = "Qwen/Qwen-Image"
 FP8_LIGHTNING_QUANT_VALUES = {"fp8-lightning", "fp8_lightning", "fp8lightning"}
 
 # --- Layered: Qwen-Image-Layered(画像 -> 複数RGBAレイヤー分解、QwenImageLayeredPipeline)---
-# diffusers のリリース版(0.36.0系)には QwenImageLayeredPipeline が存在しない(git版のみ)。
-# このため本プロジェクトの venv には git 版 diffusers のインストールが必要(README参照)。
+# diffusers 0.36.0(comfy-env)には QwenImageLayeredPipeline が存在しない(git版のみ)。
+# このワークスペースの venv には git diffusers をインストール済み(README/CLAUDE.md参照)。
 #
 # 実機調査で判明した重要事実(huggingface_hub blobs API で sha256 を直接比較して確認済み):
 #   - text_encoder(Qwen2.5-VL-7B)は Qwen/Qwen-Image-Layered と Qwen/Qwen-Image で

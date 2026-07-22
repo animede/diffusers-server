@@ -2,7 +2,7 @@
 """
 Z-Image ファミリー(T2I / I2I / Inpaint)。
 
-~/Z-image-diffusers/pipeline_manager.py(429行)+ api_server.py(276行)を
+/home/animede/Z-image-diffusers/pipeline_manager.py(429行)+ api_server.py(276行)を
 分割移植したパッケージ。公開インターフェースは core.registry.ModelFamily 経由
 (load/generate/unload/status)に加え、app.py が直接使う補助関数をこのモジュールから
 re-export する。

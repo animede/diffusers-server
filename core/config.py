@@ -214,7 +214,7 @@ def get_edit_te_offload_mode(default: str = "auto") -> str:
 
 
 # ============================================================================
-# charsheet "bf16-group" 方式(旧 ~/charsheet 完全再現、CLAUDE.md 33番)
+# charsheet "bf16-group" 方式(旧 /home/animede/charsheet 完全再現、CLAUDE.md 33番)
 # ============================================================================
 # 旧 charsheet/pipeline.py の CHARSHEET_GROUP_OFFLOAD_* 環境変数をそのまま DS_* 名で
 # 引き継ぐ(旧名は後方互換で読める。_LEGACY_ALIASES には未登録のため、

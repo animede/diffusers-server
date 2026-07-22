@@ -7,7 +7,7 @@ Phase 3 での方針転換(ユーザー目視比較の結果に基づく): 当�
 Multiple-angles LoRA 廃止)で新旧比較したところ「コスチューム等の一貫性が旧LoRA版
 よりかなり劣る」と判定されたため、LoRA 併用(families/qwen_image/edit_angles.py の
 fp8-lightning-angles 変種)を復活させた。LoRA は特定のプロンプト文言(旧
-~/charsheet/prompts.py のプロンプト、"keep items" 補強なし)でトリガー
+/home/animede/charsheet/prompts.py のプロンプト、"keep items" 補強なし)でトリガー
 学習されているため、LoRA 使用時はそのプロンプト形式をそのまま復元して使う
 (補強を追加すると LoRA が学習していない文言になり、効果が薄れる/ノイズになる懸念)。
 

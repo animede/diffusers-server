@@ -8,7 +8,7 @@ Phase 0 スモークテスト。モデルロード・pip install・HF ダウン�
 検証項目(REBUILD_PLAN §4 Phase 0 の指示どおり):
   1. core/ 全モジュールの import 成功
   2. config の新旧環境変数の解決(os.environ を一時設定して確認)
-  3. resolve のパス解決(実在の ~/ComfyUI/models 配下で確認、HF DL は発生させない)
+  3. resolve のパス解決(実在の /home/animede/ComfyUI/models 配下で確認、HF DL は発生させない)
   4. registry の登録・排他・状態管理(ダミーファミリー2つで、片方 load 時にもう片方の
      unload フックが呼ばれること)
   5. gpu.py の VRAM 計測とロックの基本動作(torch.cuda.is_available() 確認まで。モデルロードなし)

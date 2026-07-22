@@ -1,0 +1,103 @@
+[
+  {
+    "config": "qwen_t2i",
+    "desc": "Qwen T2I 2512-4bit+Lightning 1328x1328 4steps",
+    "family": "qwen_image",
+    "mode": "t2i",
+    "timestamp": "2026-07-17T23:33:03.455715",
+    "load_time_s": 15.4,
+    "cold_elapsed_s": 3.28,
+    "cold_peak_vram_gb": 25.84,
+    "warm_elapsed_s": 2.49,
+    "warm_peak_vram_gb": 25.84,
+    "request_summary": {
+      "mode": "t2i",
+      "prompt": "A photorealistic portrait of a red fox wearing a small wizard hat, standing in a misty autumn forest, cinematic lighting, high detail",
+      "negative_prompt": "",
+      "width": 1024,
+      "height": 1024,
+      "steps": 4,
+      "cfg": 1.0,
+      "seed": 42,
+      "lightning": true,
+      "shift": null
+    },
+    "env": {
+      "hostname": "dev24",
+      "python_version": "3.12.3",
+      "platform": "Linux-6.17.0-40-generic-x86_64-with-glibc2.39",
+      "torch_version": "2.9.0+cu128",
+      "cuda_available": true,
+      "gpu_name": "NVIDIA RTX PRO 5000 Blackwell",
+      "gpu_total_vram_gb": 47.3,
+      "gpu_free_vram_gb_before_run": 18.1,
+      "diffusers_version": "0.40.0.dev0"
+    }
+  },
+  {
+    "config": "flux2_t2i",
+    "desc": "FLUX.2 T2I 1024x1024 28steps",
+    "family": "flux2",
+    "mode": "t2i",
+    "timestamp": "2026-07-17T23:36:43.382789",
+    "load_time_s": 51.9,
+    "cold_elapsed_s": 73.53,
+    "cold_peak_vram_gb": 18.32,
+    "warm_elapsed_s": 73.45,
+    "warm_peak_vram_gb": 18.32,
+    "request_summary": {
+      "mode": "t2i",
+      "prompt": "A photorealistic portrait of a red fox wearing a small wizard hat, standing in a misty autumn forest, cinematic lighting, high detail",
+      "steps": 28,
+      "guidance_scale": 4.0,
+      "width": 1024,
+      "height": 1024,
+      "seed": 42
+    },
+    "env": {
+      "hostname": "dev24",
+      "python_version": "3.12.3",
+      "platform": "Linux-6.17.0-40-generic-x86_64-with-glibc2.39",
+      "torch_version": "2.9.0+cu128",
+      "cuda_available": true,
+      "gpu_name": "NVIDIA RTX PRO 5000 Blackwell",
+      "gpu_total_vram_gb": 47.3,
+      "gpu_free_vram_gb_before_run": 45.7,
+      "diffusers_version": "0.40.0.dev0"
+    },
+    "flux2_offload": "(default: model_cpu_offload)"
+  },
+  {
+    "config": "flux2_t2i",
+    "desc": "FLUX.2 T2I 1024x1024 28steps",
+    "family": "flux2",
+    "mode": "t2i",
+    "timestamp": "2026-07-17T23:39:34.934701",
+    "load_time_s": 33.31,
+    "cold_elapsed_s": 57.38,
+    "cold_peak_vram_gb": 33.84,
+    "warm_elapsed_s": 56.66,
+    "warm_peak_vram_gb": 33.84,
+    "request_summary": {
+      "mode": "t2i",
+      "prompt": "A photorealistic portrait of a red fox wearing a small wizard hat, standing in a misty autumn forest, cinematic lighting, high detail",
+      "steps": 28,
+      "guidance_scale": 4.0,
+      "width": 1024,
+      "height": 1024,
+      "seed": 42
+    },
+    "env": {
+      "hostname": "dev24",
+      "python_version": "3.12.3",
+      "platform": "Linux-6.17.0-40-generic-x86_64-with-glibc2.39",
+      "torch_version": "2.9.0+cu128",
+      "cuda_available": true,
+      "gpu_name": "NVIDIA RTX PRO 5000 Blackwell",
+      "gpu_total_vram_gb": 47.3,
+      "gpu_free_vram_gb_before_run": 9.6,
+      "diffusers_version": "0.40.0.dev0"
+    },
+    "flux2_offload": "none"
+  }
+]

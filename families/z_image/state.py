@@ -2,7 +2,7 @@
 """
 Z-Image ファミリーのシングルトン状態(プロセス内ロック + ロード済みパイプライン)。
 
-抽出元: ~/Z-image-diffusers/pipeline_manager.py
+抽出元: /home/animede/Z-image-diffusers/pipeline_manager.py
   - _lock, _base_pipeline, _i2i_pipeline, _inpaint_pipeline, _pipeline_config_repr(行90-94)
   - load_pipeline() / get_i2i_pipeline() / get_inpaint_pipeline()(行343-420)
 

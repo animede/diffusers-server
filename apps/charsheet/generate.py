@@ -8,7 +8,7 @@ charsheet の生成呼び出し(旧 charsheet/pipeline.py の生成部分を置�
   2. fp8-lightning-angles 変種(bf16 -> Lightning fuse -> Multiple-angles fuse ->
      fp8 layerwise cast)を復活 -> 「back のみ衣装が変わる」等、旧 charsheet に対する
      微妙な劣化が残る
-  3. bf16-adapter 変種(旧 ~/charsheet 方式への回帰、旧既定): fp8ストレージ化
+  3. bf16-adapter 変種(旧 /home/animede/charsheet 方式への回帰、旧既定): fp8ストレージ化
      は fuse済みLoRA差分を量子化グリッドで丸めるため(コミット 9dbb0ab で判明した機構)、
      角度LoRAの効きが劣化している可能性がある。bf16のまま Lightning + Multiple-angles を
      adapter として適用するが、ベースは fp8_e4m3fn へストレージ圧縮する
@@ -16,7 +16,7 @@ charsheet の生成呼び出し(旧 charsheet/pipeline.py の生成部分を置�
   4. bf16-group 変種(本追加、新既定、CLAUDE.md 33番): 3.のfp8ストレージ化さえも
      わずかな精度劣化要因になりうるとの判断から、ベースも一切量子化せず純粋な bf16 の
      まま常駐させ、VRAM は block-level group offloading(transformerをブロック単位で
-     GPU/CPU入れ替え)で賄う。旧 ~/charsheet/pipeline.py の "group" モード
+     GPU/CPU入れ替え)で賄う。旧 /home/animede/charsheet/pipeline.py の "group" モード
      (_apply_group_offload_to_transformer()、行282-334)と数値的に完全同一の構成
      (LoRA適用: load_lora_weights ×2 -> set_adapters(["lightning","angles"],
      adapter_weights=[1.0, 1.0])、fuse・fp8化なし)。
@@ -24,7 +24,7 @@ charsheet の生成呼び出し(旧 charsheet/pipeline.py の生成部分を置�
 環境変数 DS_CHARSHEET_METHOD で4方式を切替可能(既定 "bf16-group"):
   - "bf16-group"(既定、新規): families/qwen_image の Edit「bf16-group」変種
     (families/qwen_image/edit_angles_bf16group.py。mode="edit_angles_bf16group"、
-    旧 ~/charsheet 完全再現)。
+    旧 /home/animede/charsheet 完全再現)。
   - "bf16-adapters"(旧既定): families/qwen_image の Edit「fp8-base-adapters」変種
     (families/qwen_image/edit_angles_bf16.py。mode="edit_angles_bf16")。
   - "fp8-fuse": families/qwen_image の Edit「fp8-lightning-angles」変種

@@ -17,11 +17,12 @@ README.md の「API 一覧」は概要のみを記載し、詳細は本ドキュ
 4. [Z-Image-Turbo](#z-image-turbo)
 5. [LTX-2.3(動画+音声生成)](#ltx-23動画音声生成)
 6. [JoyAI-Image-Edit-Plus](#joyai-image-edit-plus)
-7. [charsheet](#charsheet)
-8. [ユーティリティ](#ユーティリティ)
-9. [管理系](#管理系)
-10. [エラー仕様](#エラー仕様)
-11. [環境変数の影響](#環境変数の影響)
+7. [Mage-Flow(別プロセスプロキシ)](#mage-flow別プロセスプロキシ)
+8. [charsheet](#charsheet)
+9. [ユーティリティ](#ユーティリティ)
+10. [管理系](#管理系)
+11. [エラー仕様](#エラー仕様)
+12. [環境変数の影響](#環境変数の影響)
 
 ---
 
@@ -1055,6 +1056,138 @@ curl -X POST http://localhost:8601/api/joyai/edit \
 
 ---
 
+## Mage-Flow(別プロセスプロキシ)
+
+Microsoft の軽量画像生成/編集モデル(4.1B bf16、MIT)。torch 2.13 / transformers 5.5 /
+flash-attn 2.8.3 を要求し本体venvとバージョン衝突するため、**専用venv
+(`venv-mageflow/`)の別プロセス**(`mageflow_service/app_mageflow.py`、
+`./run_mageflow.sh` で起動、既定ポート8602)で動作する。本体の `/api/mageflow/*` は
+`DS_MAGEFLOW_URL`(既定 `http://127.0.0.1:8602`)へのHTTPプロキシ。
+**ラッパー未起動時は生成系が502**(起動コマンド入りの日本語メッセージ)を返す。
+詳細は CLAUDE.md 50番。
+
+バリアント(`model` パラメータ、いずれも `steps`/`cfg` 未指定時の既定値が変わる):
+
+| `model` | T2I リポジトリ | Edit リポジトリ | 既定steps(T2I/Edit) | 既定cfg |
+|---|---|---|---|---|
+| `base` | microsoft/Mage-Flow-Base | microsoft/Mage-Flow-Edit-Base | 30 / 30 | 5.0 |
+| `rl`(既定) | microsoft/Mage-Flow | microsoft/Mage-Flow-Edit | 20 / 30 | 5.0 |
+| `turbo` | microsoft/Mage-Flow-Turbo | microsoft/Mage-Flow-Edit-Turbo | 4 / 4 | 1.0 |
+
+ラッパーは**同時1バリアントのみ常駐**(別バリアント要求時は自動unload+再ロード)。
+全プロンプトは内蔵コンテンツゲートで検査され(無効化不可)、拒否時はプレースホルダ
+画像が返る。正常出力には Gaussian-Shading 透かしが常に埋め込まれる。
+
+**排他制御(`exclusive` パラメータ、既定 `true`)**: `true` なら本体の
+`core.gpu.generation_lock` を非ブロッキング取得してから転送する(取得失敗は409。
+他ファミリーの生成と相互に排他)。`false` ならロックを取らず即転送し、他ファミリーの
+生成と並行実行できる(4.1B・ピーク18-20GB。空きVRAMが不足する組み合わせでは
+どちらかがOOMするリスクはユーザー持ち)。`registry.load()` は呼ばない
+(モデルはプロセス外のため FamilyRegistry の排他unload対象ではない)。
+
+### POST /api/mageflow/t2i
+
+Content-Type: `application/json`。
+
+| 名前 | 型 | 必須/任意 | 既定値 | 説明・制約 |
+|---|---|---|---|---|
+| `prompt` | string | 必須 | - | - |
+| `negative_prompt` | string \| null | 任意 | `null` | cfg>1 のとき有効 |
+| `width` | int | 任意 | `1024` | 16の倍数へ丸め、512〜2048にクランプ |
+| `height` | int | 任意 | `1024` | 同上 |
+| `steps` | int \| null | 任意 | `null`(バリアント既定) | - |
+| `cfg` | float \| null | 任意 | `null`(バリアント既定) | - |
+| `seed` | int | 任意 | `-1`(ランダム) | - |
+| `model` | string | 任意 | `"rl"` | `base` / `rl` / `turbo` |
+| `exclusive` | bool | 任意 | `true` | 上記「排他制御」参照 |
+
+**レスポンス例**
+
+```json
+{
+  "mode": "mageflow_t2i",
+  "prompt": "a cat holding a sign that says hello",
+  "width": 1024, "height": 1024,
+  "steps": 20, "cfg": 5.0, "seed": 12345,
+  "model": "rl", "repo": "microsoft/Mage-Flow",
+  "elapsed_s": 5.2, "load_time_s": 20.0, "peak_vram_gb": 18.5,
+  "image_url": "/outputs/mageflow_t2i_20260722_120000_aabbccdd.png",
+  "exclusive": true
+}
+```
+
+**curlサンプル**
+
+```bash
+curl -X POST http://localhost:8601/api/mageflow/t2i \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "a cat holding a sign that says hello", "model": "rl"}'
+```
+
+### POST /api/mageflow/edit
+
+Content-Type: `multipart/form-data`。
+
+| 名前 | 型 | 必須/任意 | 既定値 | 説明・制約 |
+|---|---|---|---|---|
+| `image` | file[] | 必須 | - | 参照画像1〜3枚(学習時上限。超過は400) |
+| `prompt` | string | 必須 | - | 編集指示 |
+| `negative_prompt` | string | 任意 | `""` | - |
+| `steps` | int \| null | 任意 | `null`(バリアント既定) | - |
+| `cfg` | float \| null | 任意 | `null`(バリアント既定) | - |
+| `seed` | int | 任意 | `-1`(ランダム) | - |
+| `max_size` | int | 任意 | `1024` | 出力長辺(width/height未指定時のみ有効) |
+| `width` | int \| null | 任意 | `null` | height と両方指定時のみ明示解像度 |
+| `height` | int \| null | 任意 | `null` | 同上 |
+| `model` | string | 任意 | `"rl"` | `base` / `rl` / `turbo` |
+| `exclusive` | bool | 任意 | `true` | 上記「排他制御」参照 |
+
+**レスポンス例**(`width`/`height` は出力画像の実寸)
+
+```json
+{
+  "mode": "mageflow_edit",
+  "prompt": "把背景改为城市街道",
+  "num_ref_images": 1,
+  "width": 1024, "height": 768, "max_size": 1024,
+  "steps": 30, "cfg": 5.0, "seed": 42,
+  "model": "rl", "repo": "microsoft/Mage-Flow-Edit",
+  "elapsed_s": 9.8, "load_time_s": 21.5, "peak_vram_gb": 19.9,
+  "image_url": "/outputs/mageflow_edit_20260722_120100_eeff0011.png",
+  "exclusive": true
+}
+```
+
+**curlサンプル**
+
+```bash
+curl -X POST http://localhost:8601/api/mageflow/edit \
+  -F "image=@momo.png" -F "prompt=change the background to a city street"
+```
+
+### GET /api/mageflow/status
+
+ラッパーサービスの状態を返す。**未起動時は502ではなく200で
+`{"service": "mageflow", "available": false, "detail": "..."}`** を返す
+(UIステータスバーが8秒ごとにポーリングするため)。起動時はラッパーの
+`/status` をそのまま透過する:
+
+```json
+{
+  "service": "mageflow", "loaded": true,
+  "kind": "t2i", "variant": "rl", "repo": "microsoft/Mage-Flow",
+  "load_time_s": 20.0, "busy": false,
+  "vram": {"allocated_gb": 9.5, "max_allocated_gb": 18.5, "free_gb": 40.0, "total_gb": 95.0}
+}
+```
+
+### POST /api/mageflow/unload
+
+ラッパーにロード済みのパイプラインを解放させる(`{"freed": [...]}`)。
+未起動時は502。本体の `/api/unload` とは独立(本体側のモデルには影響しない)。
+
+---
+
 ## charsheet
 
 1枚の画像から8方向キャラクターシートを生成するアプリケーション。`/api/charsheet/` 配下。
@@ -1517,8 +1650,8 @@ curl http://localhost:8601/api/progress
 | `DS_EDIT_TE_OFFLOAD` | `/api/edit`, `/api/i2i`, `/api/t2i`, charsheet | text_encoder CPU退避の`auto`/`on`/`off`。レスポンスの`te_offload`に反映 |
 | `DS_CHARSHEET_METHOD` | `/api/charsheet/generate` とその派生 | 8方向生成の方式(`bf16-group`既定 / `bf16-adapters` / `fp8-fuse` / `prompt-only`)。ジョブの`load_info.method`に反映 |
 | `DS_OFFLOAD` | 全ファミリーの生成速度・VRAM | オフロードモード(`none`/`model`/`group`/`group_lowvram`)。レスポンスの`offload_mode`に反映 |
-| `DS_LTX2_OFFLOAD` | `/api/ltx2/*` | `none`(96GB機向け)/ `group`(48GB向け)/ `auto`。生成速度・ピークVRAMに直接影響 |
-| `DS_LTX2_TE_QUANT` | `/api/ltx2/*` | text_encoder(Gemma 3 12B)の量子化(`none`/`fp8`/`nf4`)。VRAM削減に影響 |
+| `DS_LTX2_OFFLOAD` | `/api/ltx2/*` | `none`(96GB機向け)/ `group`(既定、2026-07-22変更)/ `auto`(非推奨)。生成速度・ピークVRAMに直接影響。CLAUDE.md 49番参照 |
+| `DS_LTX2_TE_QUANT` | `/api/ltx2/*` | text_encoder(Gemma 3 12B)の量子化(`none`/`fp8`(既定、2026-07-22変更)/`nf4`)。VRAM削減に影響。`nf4`は別チェックポイントで品質A/B未確定 |
 | `DS_JOYAI_TE_OFFLOAD` | `/api/joyai/edit` | transformer⇔text_encoder相互排他スワップの有効化(既定`auto`で実質常時有効) |
 | `DS_ZIMAGE_PRECISION` | `/api/zimage/*` | `bf16`(既定)\| `bnb-4bit` |
 | `DS_FLUX2_PRECISION` | `/api/flux2/*` | `bnb-4bit`(既定)\| `bf16` |

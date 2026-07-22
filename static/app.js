@@ -255,7 +255,23 @@ async function refreshStatus() {
     const joyaiStatus = joyai.loaded
       ? `JoyAI:ロード済(te_offload=${joyai.te_offload || "?"})`
       : "JoyAI:未ロード";
-    const loaded = `T2I/I2I:${data.t2i_loaded ? "ロード済" : "未ロード"}${t2iQuant} Edit:${data.edit_loaded ? "ロード済" + editQuant : "未ロード"} ${controlnetStatus} ${layeredStatus} ${flux2Status} ${zimageStatus} ${ltx2Status} ${joyaiStatus}`;
+    // Mage-Flow は別プロセスのラッパーサービス(/api/mageflow/status がプロキシ)。
+    // 未起動時は {available:false} が200で返る(毎回502にしない設計、app.py参照)。
+    let mageflowStatus = "Mage-Flow:未起動";
+    try {
+      const mfRes = await fetch("/api/mageflow/status");
+      const mf = await mfRes.json();
+      if (mf.available === false) {
+        mageflowStatus = "Mage-Flow:未起動";
+      } else if (mf.loaded) {
+        mageflowStatus = `Mage-Flow:ロード済(${mf.kind}/${mf.variant})${mf.busy ? "[生成中]" : ""}`;
+      } else {
+        mageflowStatus = "Mage-Flow:起動済・未ロード";
+      }
+    } catch (e) {
+      /* ステータスバー全体を壊さない */
+    }
+    const loaded = `T2I/I2I:${data.t2i_loaded ? "ロード済" : "未ロード"}${t2iQuant} Edit:${data.edit_loaded ? "ロード済" + editQuant : "未ロード"} ${controlnetStatus} ${layeredStatus} ${flux2Status} ${zimageStatus} ${ltx2Status} ${joyaiStatus} ${mageflowStatus}`;
     const busy = data.gpu_busy ? " [GPU使用中]" : "";
     const offload = data.offload_mode ? `offload=${data.offload_mode}` : "offload=未確定(初回ロード時に決定)";
     const last = data.last_generation && data.last_generation.mode
@@ -292,6 +308,17 @@ document.getElementById("unload-flux2-btn").addEventListener("click", () => unlo
 document.getElementById("unload-zimage-btn").addEventListener("click", () => unload("zimage"));
 document.getElementById("unload-ltx2-btn").addEventListener("click", () => unload("ltx2"));
 document.getElementById("unload-joyai-btn").addEventListener("click", () => unload("joyai"));
+// Mage-Flow は別プロセス(ラッパーサービス)のため、本体の /api/unload ではなく
+// 専用の /api/mageflow/unload を叩く(サービス未起動時は502メッセージを表示)。
+document.getElementById("unload-mageflow-btn").addEventListener("click", async () => {
+  try {
+    const res = await fetch("/api/mageflow/unload", { method: "POST" });
+    await handleJsonResponse(res);
+    refreshStatus();
+  } catch (e) {
+    alert("Mage-Flowの解放に失敗しました: " + e.message);
+  }
+});
 document.getElementById("unload-all-btn").addEventListener("click", () => unload("all"));
 
 // --- ギャラリー ---
@@ -2092,14 +2119,18 @@ setupLlmButtons("ltx2-t2v-form", "ltx2-t2v-error");
 // 注意: サブタブボタンも .tab-btn クラスを持つため、メインタブ切替ハンドラは
 // [data-tab] 属性セレクタで限定してある(冒頭の「タブ切替」コメント参照。クラスだけで
 // バインドするとサブタブクリックでメインパネルが消えるバグになる、2026-07-20修正済み)。
+// サブタブパネルのクラスは ".ltx2-subtab, .mageflow-subtab"(タブごとに独立)。
+// closest(".gen-col-left") でスコープするため、LTX2タブとMage-Flowタブが互いの
+// パネルを操作することはない(Mage-Flowタブ追加時に共通セレクタ化、2026-07-22)。
+const SUBTAB_PANEL_SELECTOR = ".ltx2-subtab, .mageflow-subtab";
 document.querySelectorAll('nav.tabs button[data-subtab]').forEach((btn) => {
   btn.addEventListener("click", () => {
     const parent = btn.closest(".gen-col-left");
     parent.querySelectorAll('nav.tabs button[data-subtab]').forEach((b) => b.classList.remove("active"));
-    parent.querySelectorAll(".ltx2-subtab").forEach((p) => p.classList.add("hidden"));
-    parent.querySelectorAll(".ltx2-subtab").forEach((p) => p.classList.remove("active"));
+    parent.querySelectorAll(SUBTAB_PANEL_SELECTOR).forEach((p) => p.classList.add("hidden"));
+    parent.querySelectorAll(SUBTAB_PANEL_SELECTOR).forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
-    const target = parent.querySelector(`.ltx2-subtab[data-subtab="${btn.dataset.subtab}"]`);
+    const target = parent.querySelector(`[data-subtab="${btn.dataset.subtab}"]:not(button)`);
     if (target) {
       target.classList.remove("hidden");
       target.classList.add("active");
@@ -2293,6 +2324,99 @@ document.getElementById("ltx2-iclora-form").addEventListener("submit", async (ev
     showError("ltx2-iclora-error", e.message);
   } finally {
     stopProgressPolling("ltx2-result-panel");
+    setFormBusy(form, false);
+    refreshStatus();
+  }
+});
+
+// ============================================================================
+// Mage-Flow タブ(別プロセスのラッパーサービスへのプロキシ /api/mageflow/*)
+// 2026-07-22追加。フォーム値の組み立ては他タブと同じ流儀(T2I=JSON、Edit=multipart)。
+// exclusive チェックボックス(既定ON)は「他の生成と同時実行しない」= 本体の
+// generation_lock を取ってから転送する(取得失敗は409。詳細は app.py のコメント参照)。
+// ============================================================================
+setupLlmButtons("mageflow-t2i-form", "mageflow-t2i-error");
+setupLlmButtons("mageflow-edit-form", "mageflow-edit-error");
+
+document.getElementById("mageflow-t2i-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const form = ev.target;
+  showError("mageflow-t2i-error", null);
+  const fd = new FormData(form);
+  const body = {
+    prompt: fd.get("prompt"),
+    negative_prompt: fd.get("negative_prompt") || null,
+    width: parseInt(fd.get("width"), 10),
+    height: parseInt(fd.get("height"), 10),
+    steps: fd.get("steps") ? parseInt(fd.get("steps"), 10) : null,
+    cfg: fd.get("cfg") ? parseFloat(fd.get("cfg")) : null,
+    seed: parseInt(fd.get("seed"), 10),
+    model: fd.get("model") || "rl",
+    exclusive: fd.get("exclusive") === "on",
+  };
+  setFormBusy(form, true);
+  startProgressPolling("mageflow-result-panel");
+  try {
+    const res = await fetch("/api/mageflow/t2i", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await handleJsonResponse(res);
+    gallery.push(data);
+    renderGallery();
+    showLatestResult("mageflow-result-panel", data);
+  } catch (e) {
+    showError("mageflow-t2i-error", e.message);
+  } finally {
+    stopProgressPolling("mageflow-result-panel");
+    setFormBusy(form, false);
+    refreshStatus();
+  }
+});
+
+document.getElementById("mageflow-edit-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const form = ev.target;
+  showError("mageflow-edit-error", null);
+  const imageInput = document.getElementById("mageflow-edit-image-input");
+  if (!imageInput.files || imageInput.files.length === 0) {
+    showError("mageflow-edit-error", "参照画像を1枚以上選択してください");
+    return;
+  }
+  if (imageInput.files.length > 3) {
+    showError("mageflow-edit-error", "参照画像は最大3枚までです");
+    return;
+  }
+  const fd = new FormData();
+  for (const file of imageInput.files) fd.append("image", file);
+  fd.set("prompt", form.querySelector('[name="prompt"]').value);
+  fd.set("negative_prompt", form.querySelector('[name="negative_prompt"]').value || "");
+  fd.set("model", form.querySelector('[name="model"]').value || "rl");
+  fd.set("max_size", form.querySelector('[name="max_size"]').value || "1024");
+  fd.set("seed", form.querySelector('[name="seed"]').value || "-1");
+  // 空欄のオプション値は送らない(ラッパー側でバリアント既定値/自動解像度になる)
+  const stepsVal = form.querySelector('[name="steps"]').value;
+  if (stepsVal) fd.set("steps", stepsVal);
+  const cfgVal = form.querySelector('[name="cfg"]').value;
+  if (cfgVal) fd.set("cfg", cfgVal);
+  const widthVal = form.querySelector('[name="width"]').value;
+  if (widthVal) fd.set("width", widthVal);
+  const heightVal = form.querySelector('[name="height"]').value;
+  if (heightVal) fd.set("height", heightVal);
+  fd.set("exclusive", form.querySelector('[name="exclusive"]').checked ? "true" : "false");
+  setFormBusy(form, true);
+  startProgressPolling("mageflow-result-panel");
+  try {
+    const res = await fetch("/api/mageflow/edit", { method: "POST", body: fd });
+    const data = await handleJsonResponse(res);
+    gallery.push(data);
+    renderGallery();
+    showLatestResult("mageflow-result-panel", data);
+  } catch (e) {
+    showError("mageflow-edit-error", e.message);
+  } finally {
+    stopProgressPolling("mageflow-result-panel");
     setFormBusy(form, false);
     refreshStatus();
   }

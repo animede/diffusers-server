@@ -12,57 +12,65 @@ LTX-2.3 ファミリーのランタイム構成(環境変数、DS_LTX2_* 名前�
     CPU側に静的確保、丸ごとスワップは禁止)。text_encoder(~23GB)/ connectors(~6.3GB)/
     vae類は GPU 常駐のまま(旧charsheet "group" モードと同じ設計思想: 一番大きい
     transformer だけを block 単位でオフロードすれば、48GB専有には十分収まる)。
-  - "auto"(既定): 空きVRAMで none / group を自動選択
+  - "auto": 空きVRAMで none / group を自動選択
     (DS_LTX2_OFFLOAD_FREE_VRAM_THRESHOLD_GB、既定 75.0)。
+  - "group"(既定、2026-07-22変更): "auto"は空きVRAMの瞬間値で判定するため、他ファミリー
+    切替直後や高解像度・多フレーム動画で"none"モードの巨大な単発アロケーション
+    (CLAUDE.md 45番、原因未特定)によりOOMしやすいと実機報告があった。361フレーム
+    (15秒)+2xアップスケールでもピーク27.7GB(fp8 TE併用)で完走することを実機確認
+    したため、常に"group"を使う設計へ変更した(CLAUDE.md該当項目参照)。
 
 ロード前RAMガード(CLAUDE.md 34番のパターン踏襲): group モード時は CPU に
 transformer(bf16 ~35.4GB)を静的確保するため、空きRAM(MemAvailable)が
 DS_LTX2_GROUP_OFFLOAD_MIN_RAM_GB(既定 40.0GB)を下回れば明確な RuntimeError で中止する。
 """
-import os
-
 from core.config import env_bool, env_float, env_str
-from core.resolve import COMFYUI_MODELS_DIR
 
 MODEL_ID_CONFIG_REPO = "diffusers/LTX-2.3-Diffusers"  # config/tokenizer取得専用(重みはローカル)
 
-DEFAULT_CKPT_PATH = os.path.join(
-    COMFYUI_MODELS_DIR, "checkpoints", "ltx-2.3-22b-distilled-fp8.safetensors"
-)
-DEFAULT_GEMMA_PATH = os.path.join(
-    COMFYUI_MODELS_DIR, "text_encoders", "gemma_3_12B_it.safetensors"
-)
+DEFAULT_CKPT_PATH = "/home/animede/ComfyUI/models/checkpoints/ltx-2.3-22b-distilled-fp8.safetensors"
+DEFAULT_GEMMA_PATH = "/home/animede/ComfyUI/models/text_encoders/gemma_3_12B_it.safetensors"
 
 # latent upsampler(低解像度生成 -> 潜在空間アップスケール -> 高解像度デコードの2段生成、
 # 2026-07-20追加)。ComfyUI配布のローカルファイル(bf16、~995MB)を優先し、config だけ
 # HF Hub の Lightricks/LTX-2(latent_upsampler/config.json、266バイトの小さいJSON)から
 # 取得する(families/ltx2/convert.py の load_upsampler() 参照。use_rational_resampler=False
 # へ上書きしてローカルファイルの構造に合わせる)。
-DEFAULT_UPSAMPLER_PATH = os.path.join(
-    COMFYUI_MODELS_DIR, "latent_upscale_models", "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+DEFAULT_UPSAMPLER_PATH = (
+    "/home/animede/ComfyUI/models/latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
 )
 DEFAULT_UPSAMPLER_CONFIG_REPO = "Lightricks/LTX-2"
 
 # text_encoder(Gemma 3 12B)量子化オプション(2026-07-20追加、CLAUDE.md 33番・37番・39番の
 # 「transformer/text_encoder/connectorsを丸ごとCPUスワップしない」方針を厳守した上での
-# VRAM削減策)。既定は "none"(bf16フル精度、既定挙動は一切変えない。品質A/BのUB承認待ち):
-#   "none"(既定): 現行どおり。load_text_encoder() でロードした bf16 モデルをそのまま使う。
-#   "fp8"       : ロード済み bf16 text_encoder に apply_layerwise_casting()
+# VRAM削減策)。
+#   "none"      : bf16フル精度。load_text_encoder() でロードした bf16 モデルをそのまま使う。
+#   "fp8"(既定、2026-07-22変更): ロード済み bf16 text_encoder に apply_layerwise_casting()
 #                 (storage_dtype=float8_e4m3fn, compute_dtype=bfloat16)を適用する
-#                 (VRAM ~23GB -> ~12GB見込み)。embed_tokens/lm_head/rotary_emb 等の
-#                 decoder-onlyには無い命名(diffusers既定skipパターンはtransformer系の
-#                 命名規則向けのため、Gemma3の embed_tokens/lm_head はデフォルトでは
-#                 skipされない)は明示的に追加skipパターンで保護する。
-#   "nf4"       : QAT版ローカルチェックポイント(DS_LTX2_TE_QAT_DIR)を
-#                 BitsAndBytesConfig(nf4)でロードする(VRAM ~8GB見込み)。
-DEFAULT_TE_QUANT = "none"
+#                 (VRAM ~23GB -> ~12GB見込み、実測はCLAUDE.md 42番参照)。embed_tokens/
+#                 lm_head/rotary_emb 等の decoder-onlyには無い命名(diffusers既定skip
+#                 パターンはtransformer系の命名規則向けのため、Gemma3の embed_tokens/
+#                 lm_head はデフォルトではskipされない)は明示的に追加skipパターンで
+#                 保護する。ロード元は "none" と**同一のbf16チェックポイント**を量子化
+#                 するだけなので、hidden statesのずれや別チェックポイント由来の品質
+#                 懸念がない(下記nf4との違い)。
+#   "nf4"       : QAT版ローカルチェックポイント(DS_LTX2_TE_QAT_DIR、Googleの別配布、
+#                 通常it版とは異なる重み)を BitsAndBytesConfig(nf4)でロードする
+#                 (VRAM ~8GB見込み、fp8よりさらに小さい)。**hidden statesがit版とずれ、
+#                 品質A/Bはユーザー未確定**(CLAUDE.md 42番、比較用動画3本あり)のため
+#                 既定には採用しない。VRAMをさらに切り詰めたい場合の選択肢として残す。
+# 既定を "none" から "fp8" へ変更した経緯(2026-07-22): DS_LTX2_OFFLOAD="auto" が
+# 空きVRAMの瞬間値で offload_mode を決めるため、他ファミリーとの切替直後や高解像度・
+# 多フレーム動画で "none" モードの巨大な単発アロケーション(CLAUDE.md 45番、原因未特定)
+# によりOOMしやすいと実機報告があった。"group"+"nf4" なら361フレーム(15秒)+2xアップ
+# スケールでもピーク20.7GBで完走することを実機確認したが、上記の品質懸念からユーザーは
+# "group"+"fp8" (同条件でピーク27.7GB、いずれもCLAUDE.md該当項目参照)を選択した。
+DEFAULT_TE_QUANT = "fp8"
 # QAT版 Gemma 3 12B(Google, unquantized権重を保持した完全HF形式ディレクトリ)。
 # resolve.py の ComfyUI ディレクトリ解決の流儀(COMFYUI_MODELS_DIR配下)に合わせる。
-DEFAULT_TE_QAT_DIR = os.path.join(
-    COMFYUI_MODELS_DIR, "text_encoders", "gemma-3-12b-it-qat-q4_0-unquantized"
-)
+DEFAULT_TE_QAT_DIR = "/home/animede/ComfyUI/models/text_encoders/gemma-3-12b-it-qat-q4_0-unquantized"
 
-DEFAULT_OFFLOAD = "auto"
+DEFAULT_OFFLOAD = "group"
 DEFAULT_OFFLOAD_FREE_VRAM_THRESHOLD_GB = 75.0
 DEFAULT_GROUP_OFFLOAD_MIN_RAM_GB = 40.0
 
@@ -116,9 +124,7 @@ DEFAULT_V2A_MAX_NUM_FRAMES = 361  # フレーム数上限(8n+1、run_v2a()/run_i
 # プロンプトで「シーン内で何が変わるか」を指示すると、緑マスク領域が指示通りに変化した動画を
 # 生成する(HF repo siraxe/MergeGreen_IC-lora_ltx2.3、Apache-2.0)。既定のマスク範囲は
 # 動画全体の中央1/3(mask_start/mask_end で明示上書き可)。
-DEFAULT_ICLORA_PATH = os.path.join(
-    COMFYUI_MODELS_DIR, "loras", "ltx2", "ic_merge", "MergeGreen_IC-lora_ltx2.3.safetensors"
-)
+DEFAULT_ICLORA_PATH = "/home/animede/ComfyUI/models/loras/ltx2/ic_merge/MergeGreen_IC-lora_ltx2.3.safetensors"
 DEFAULT_ICLORA_HF_REPO = "siraxe/MergeGreen_IC-lora_ltx2.3"
 DEFAULT_ICLORA_HF_FILE = "MergeGreen_IC-lora_ltx2.3.safetensors"
 # LoRA strength: HFリポジトリのComfyUIワークフロー(MergeGreen_IC-lora_ltx2.3.json、
@@ -139,9 +145,10 @@ class LTX2RuntimeConfig:
     DS_LTX2_GEMMA_PATH  : Gemma 3 12B bf16 チェックポイントの絶対パス
     DS_LTX2_UPSAMPLER_PATH        : latent upsampler(ComfyUI形式bf16、~995MB)の絶対パス
     DS_LTX2_UPSAMPLER_CONFIG_REPO : latent upsampler の config.json 取得元(HF Hub repo id)
-    DS_LTX2_TE_QUANT    : "none"(既定) | "fp8" | "nf4"(text_encoder量子化、上記docstring参照)
+    DS_LTX2_TE_QUANT    : "none" | "fp8"(既定、2026-07-22変更) | "nf4"(text_encoder量子化、
+                          上記docstring参照)
     DS_LTX2_TE_QAT_DIR  : "nf4" 時にロードする QAT版 Gemma 3 12B ディレクトリの絶対パス
-    DS_LTX2_OFFLOAD     : "auto"(既定) | "none" | "group"
+    DS_LTX2_OFFLOAD     : "auto" | "none" | "group"(既定、2026-07-22変更)
     DS_LTX2_OFFLOAD_FREE_VRAM_THRESHOLD_GB : auto判定の閾値(既定75.0、これ以上空きがあればnone)
     DS_LTX2_GROUP_OFFLOAD_MIN_RAM_GB : groupロード前のRAMガード閾値(既定40.0)
     DS_LTX2_GROUP_OFFLOAD_BLOCKS : group offload の num_blocks_per_group(既定1)

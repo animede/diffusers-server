@@ -2,7 +2,7 @@
 """
 Z-Image ファミリーのランタイム構成(環境変数)。
 
-抽出元: ~/Z-image-diffusers/pipeline_manager.py の ZImageConfig クラス
+抽出元: /home/animede/Z-image-diffusers/pipeline_manager.py の ZImageConfig クラス
 (行101-151)。
 
 環境変数名は DS_* に統一しつつ、旧実装(Z-image-diffusers)で使われていた ZIMAGE_* も

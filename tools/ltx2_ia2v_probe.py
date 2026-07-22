@@ -63,13 +63,11 @@ import time
 import numpy as np
 import torch
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _REPO_ROOT)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 実際に実行する場合は、手元の参照画像・音声ファイルのパスに差し替えること。
-IMAGE_PATH = os.path.expanduser("~/ComfyUI/output/RemoveBG-result_00003_.png")
-AUDIO_PATH = os.path.expanduser("~/audio.wav")
-OUT_DIR = os.path.join(_REPO_ROOT, "outputs", "_ltx2_ia2v_probe")
+IMAGE_PATH = "/home/animede/ComfyUI/output/RemoveBG-result_00003_.png"
+AUDIO_PATH = "/home/animede/audio.wav"
+OUT_DIR = "/tmp/claude-1000/-home-animede-diffusers-server/004ec3eb-8a16-41bb-90bc-6905fddac044/scratchpad/ltx2_ia2v"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 

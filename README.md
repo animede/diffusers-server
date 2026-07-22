@@ -103,6 +103,46 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 LTX-2.3(動画生成)は ComfyUI 形式のチェックポイントを前提とするため、
 `DS_LTX2_CKPT_PATH` 等でファイルパスを指定する必要があります(詳細は環境変数表参照)。
 
+### 4. Mage-Flow セットアップ(任意、別プロセス・専用venv)
+
+Mage-Flow(Microsoft、軽量4.1B T2I/Edit、MIT)は torch 2.13 / transformers 5.5 /
+flash-attn 2.8.3 を要求し、本体venvとバージョン衝突するため**完全隔離の専用venv**で
+動かします(`--system-site-packages` は使わない。comfy-env にもインストールしない)。
+
+```bash
+# 1) Mage リポジトリの取得
+mkdir -p third_party && git clone --depth 1 https://github.com/microsoft/Mage.git third_party/Mage
+
+# 2) 専用venv(完全隔離)
+python3.12 -m venv venv-mageflow
+
+# 3) torch は cu130 系(sm_120/Blackwell のカーネルは cu129 以降にしか入っていない。
+#    cu126/cu128 wheel は sm_120 非対応なので不可)
+venv-mageflow/bin/pip install --index-url https://download.pytorch.org/whl/cu130 \
+    torch==2.13.0 torchvision==0.28.0
+
+# 4) 残りの依存 + ラッパーサービス用パッケージ
+venv-mageflow/bin/pip install diffusers==0.38.0 transformers==5.5.0 \
+    "accelerate>=1.0.0" "safetensors>=0.8.0" einops pydantic pillow loguru \
+    fastapi uvicorn python-multipart requests ninja
+
+# 5) flash-attn 2.8.3 をソースビルド(必須。varlen packing が唯一のattention経路)。
+#    nvcc は torch の CUDA メジャーと一致させる(cu130 → /usr/local/cuda-13.0)。
+#    ★並列数を必ず制限すること(無制限だと 20並列nvcc がホストRAMを食い潰し
+#      システム全体を巻き込むOOMになった実績あり。CLAUDE.md 50番)
+systemd-run --user --scope -p MemoryMax=45G -p MemorySwapMax=0 \
+    env PATH=/usr/local/cuda-13.0/bin:$PATH CUDA_HOME=/usr/local/cuda-13.0 \
+    MAX_JOBS=4 NVCC_THREADS=2 TORCH_CUDA_ARCH_LIST="12.0" \
+    venv-mageflow/bin/pip install --no-build-isolation flash-attn==2.8.3
+
+# 6) mage_flow パッケージ(依存は上で導入済みなので --no-deps)
+venv-mageflow/bin/pip install -e third_party/Mage/mage_flow --no-deps
+```
+
+モデル(HF Hub、各リポジトリ自己完結型 diffusers-style)は初回リクエスト時に自動
+ダウンロードされます(T2I/Edit 各 base/rl/turbo の6リポジトリ。既定の `rl` は
+`microsoft/Mage-Flow` + `microsoft/Mage-Flow-Edit`)。
+
 ## 起動方法
 
 ```bash
@@ -111,16 +151,27 @@ python -m uvicorn app:app --host 0.0.0.0 --port 8601
 
 起動後、ブラウザで `http://localhost:8601/` を開くと Web UI が表示されます。
 
+Mage-Flow を使う場合はラッパーサービスも起動します(別プロセス、既定ポート8602):
+
+```bash
+./run_mageflow.sh                      # ポートは DS_MAGEFLOW_PORT で変更可
+# 本体側はラッパーへ DS_MAGEFLOW_URL(既定 http://127.0.0.1:8602)で接続する。
+# ポートを変えた場合は本体起動時に DS_MAGEFLOW_URL を合わせること。
+```
+
 ## UI 構成
 
 タブ構成: T2I / I2I / Edit / ControlNet / Inpaint / Layered / 背景削除 / キャラシート /
-動画(LTX-2.3)。
+動画(LTX-2.3)/ Mage-Flow。
 
 - **T2I / I2I タブ**: モデル選択で Qwen-Image-2512 / Qwen-Image(無印) / FLUX.2-dev /
   Z-Image-Turbo を切り替え
 - **Edit タブ**: Qwen-Image-Edit-Plus(2511)/ JoyAI-Edit-Plus(複数参照画像合成)を切替
 - **Inpaint タブ**: Qwen ControlNet / Z-Image-Turbo を切替
 - **動画タブ**: T2V / I2V / FLF(First-Last-Frame)等のサブタブ
+- **Mage-Flow タブ**: T2I / Edit のサブタブ(base/rl/turbo バリアント選択、
+  「排他制御」チェックボックス既定ON。別プロセスのラッパーサービス経由、
+  未起動時は起動コマンド入りのエラーメッセージを表示)
 
 各生成結果パネル・比較ギャラリーカードには、ダウンロードボタンとインスタント背景削除
 ボタンが付いています。
@@ -140,6 +191,8 @@ python -m uvicorn app:app --host 0.0.0.0 --port 8601
 | `POST /api/zimage/t2i` / `/api/zimage/i2i` / `/api/zimage/inpaint` | Z-Image-Turbo |
 | `POST /api/ltx2/t2v` / `/i2v` / `/flf` / `/ia2v` / `/keyframes` / `/v2a` / `/iclora` | LTX-2.3 動画生成(各種条件付け・音声・編集モード) |
 | `POST /api/joyai/edit` | JoyAI-Edit-Plus によるマルチ参照画像編集 |
+| `POST /api/mageflow/t2i` / `/api/mageflow/edit` | Mage-Flow T2I / Edit(別プロセスへのプロキシ、`exclusive` で排他選択) |
+| `GET /api/mageflow/status` / `POST /api/mageflow/unload` | Mage-Flow ラッパーの状態確認 / 解放 |
 | `POST /api/charsheet/generate` 他 | キャラクターシート生成ジョブ(8方向) |
 | `POST /api/prompt/enhance` / `/api/prompt/translate` | LLM プロンプト支援(要別途LLMサーバ) |
 | `GET /api/status` | 全ファミリーのロード状態・VRAM |
@@ -171,12 +224,30 @@ python -m uvicorn app:app --host 0.0.0.0 --port 8601
 | `DS_LLM_URL` | `http://127.0.0.1:64652` | プロンプト支援機能が呼ぶ、OpenAI互換 `/v1/chat/completions` を持つローカルLLMサーバのURL(任意機能、無くても他機能に影響なし) |
 | `DS_CHARSHEET_METHOD` | `bf16-group` | キャラクターシート生成の実装方式切替 |
 | `DS_LTX2_CKPT_PATH` / `DS_LTX2_GEMMA_PATH` | ComfyUIモデルディレクトリ配下 | LTX-2.3 のチェックポイント・text_encoderパス |
-| `DS_LTX2_OFFLOAD` | `auto` | LTX-2.3 のオフロードモード(`none` / `group` / `auto`) |
-| `DS_LTX2_TE_QUANT` | `none` | LTX-2.3 text_encoder の量子化(`none` / `fp8` / `nf4`) |
+| `DS_LTX2_OFFLOAD` | `group`(2026-07-22変更) | LTX-2.3 のオフロードモード(`none` / `group` / `auto`)。`auto`は空きVRAMの瞬間値で判定するため他ファミリー切替直後・高解像度多フレーム時にOOMしやすく非推奨(CLAUDE.md 49番) |
+| `DS_LTX2_TE_QUANT` | `fp8`(2026-07-22変更) | LTX-2.3 text_encoder の量子化(`none` / `fp8` / `nf4`)。`nf4`はGoogle製QAT版の別チェックポイントで品質A/B未確定のため既定に非採用(CLAUDE.md 49番) |
+| `DS_MAGEFLOW_URL` | `http://127.0.0.1:8602` | 本体サーバが Mage-Flow ラッパーサービスへ接続するURL(ポートはハードコードしない。ラッパー未起動時は `/api/mageflow/*` 生成系が502) |
+| `DS_MAGEFLOW_PORT` / `DS_MAGEFLOW_HOST` | `8602` / `127.0.0.1` | `run_mageflow.sh` がラッパーサービスを起動するポート/ホスト |
 
 VRAM しきい値はお使いの GPU の空き VRAM に合わせて調整してください。値を大きくしすぎると
 本来オフロード不要な構成までオフロードされ低速になり、小さくしすぎると OOM のリスクが
 上がります。
+
+**LTX-2.3 `group` オフロードのホスト RAM ガードについて**: `group` モード(既定)は
+transformer(bf16 約35.4GB)を一時的にホスト RAM 上に構築してから GPU への block-level
+転送に登録する設計のため、**パイプラインの初回ロード時**(サーバ起動後の最初のLTX-2.3
+生成リクエスト、または `/api/unload` や他ファミリーへの切替でLTX-2.3が一度アンロード
+された後の次回ロード時)に、空きホスト RAM(`/proc/meminfo` の `MemAvailable`)が
+`DS_LTX2_GROUP_OFFLOAD_MIN_RAM_GB`(既定 40.0GB)を下回っていると、システムフリーズを
+避けるためロード自体を明確なエラーメッセージ付きで中止します(旧実装がこのガードを
+持たず実際にフリーズ・強制終了を招いた経緯は `CLAUDE.md` 17番参照)。**このガードは
+動画の解像度・フレーム数・アップスケール有無とは無関係**です(一度ロードされた
+パイプラインはそれ以降のリクエストで再チェックされません)。ブラウザ・IDE 等
+他アプリのメモリ使用量が大きいマシンでは、LTX-2.3 生成の**最初の1回目**がこのエラーで
+失敗することがあります。その場合は他アプリを閉じるかホストRAMの空きを確保してから
+再試行してください(`free -h` の `available` 列で確認可能)。閾値を下げる
+(`DS_LTX2_GROUP_OFFLOAD_MIN_RAM_GB`)ことも可能ですが、フリーズのリスクとのトレード
+オフのため推奨しません。
 
 ## 使用モデルとライセンス
 
@@ -198,6 +269,8 @@ VRAM しきい値はお使いの GPU の空き VRAM に合わせて調整して�
 | Gemma 3(LTX-2.3 の text encoder) | Google | Gemma 利用規約(要モデルカード確認) |
 | JoyAI-Image-Edit-Plus | `jdopensource/JoyAI-Image-Edit-Plus-Diffusers` | Apache License 2.0 |
 | MergeGreen IC-LoRA(LTX-2.3用) | `siraxe/MergeGreen_IC-lora_ltx2.3` | Apache License 2.0 |
+| Mage-Flow(T2I: Base/RL/Turbo) | `microsoft/Mage-Flow-Base` / `microsoft/Mage-Flow` / `microsoft/Mage-Flow-Turbo` | MIT(コード・重みとも。要モデルカード確認) |
+| Mage-Flow-Edit(Base/RL/Turbo) | `microsoft/Mage-Flow-Edit-Base` / `microsoft/Mage-Flow-Edit` / `microsoft/Mage-Flow-Edit-Turbo` | MIT(同上) |
 
 **本リポジトリ自体(コード)は Apache License 2.0 で公開しています**が、上記モデルの
 重みを利用して生成したコンテンツやモデルの再配布については、各モデルのライセンス条項が

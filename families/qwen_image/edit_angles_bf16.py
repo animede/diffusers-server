@@ -18,7 +18,7 @@ enable_text_encoder_cpu_offload_with_transformer_swap 系は完全に削除し�
   1. bf16 2511 transformer をロード(streaming、直接 cuda:0)
   2. Lightning + Multiple-angles を transformer に adapter としてロード・有効化
      (`transformer.load_lora_adapter()` ×2 -> `transformer.set_adapters(["lightning",
-     "angles"], weights=[1.0, 1.0])`。旧 ~/charsheet/pipeline.py の
+     "angles"], weights=[1.0, 1.0])`。旧 /home/animede/charsheet/pipeline.py の
      _apply_loras()(行271-279)と同じ LoRA 計算。fuse はしない)
   3. その後 `enable_layerwise_casting(storage_dtype=fp8_e4m3fn, compute_dtype=bf16)`
      でベースのみ fp8 ストレージ化(実測 ~19-20GB)
