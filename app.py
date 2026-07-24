@@ -723,11 +723,15 @@ async def generate_ltx2_flf(
     strength: float = Form(ltx2.DEFAULT_FLF_STRENGTH),
     seed: int = Form(-1),
     audio_out: str = Form(ltx2.DEFAULT_AUDIO_OUT),
+    upscale: int = Form(0),
 ):
     """FLF(First-Last-Frame): 最初と最後のフレーム画像を指定し、間の動画を生成する。
 
     ComfyUIワークフロー video_ltx2_3-22b-flf-bf8.json の LTXVAddGuide ×2
     (frame_idx=0/-1, strength既定0.7)に対応する。
+
+    upscale=1 でT2V/I2Vと同じ latent upsampler 2段生成(低解像度denoise→2x spatial→
+    高解像度decode)を有効化する(2026-07-23追加、CLAUDE.md 43番・51番参照)。
     """
     first_contents = await first_image.read()
     last_contents = await last_image.read()
@@ -751,6 +755,7 @@ async def generate_ltx2_flf(
             "strength": strength,
             "seed": seed,
             "audio_out": audio_out,
+            "upscale": upscale,
             "_first_image": first_img,
             "_last_image": last_img,
         },

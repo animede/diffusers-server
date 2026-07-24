@@ -369,6 +369,13 @@ def run_flf(req: dict, first_image: Image.Image, last_image: Image.Image) -> dic
     に対応する。LTX2ConditionPipeline.prepare_conditions() が画像を「長辺基準でリサイズして
     target(height, width)へ中央クロップ」する実装(ComfyUIの ResizeImageMaskNode
     "scale dimensions" + center crop と同じ挙動)のため、呼び出し側で事前リサイズは行わない。
+
+    upscale=1 で T2V/I2V と同じ latent upsampler 2段生成に切り替わる(2026-07-23追加、
+    CLAUDE.md 51番)。LTX2ConditionPipeline も output_type="latent" 時は
+    「条件トークン除去 → _unpack_latents() → _denormalize_latents()」の順で処理した
+    5D latent を返す(pipeline_ltx2_condition.py で1行単位に確認済み、43番の色化け事故対策)。
+    audio latents も output_type 分岐の前に無条件で denormalize+unpack されるため、
+    どちらも _run_upscaled() が前提とする形式と完全一致する。
     """
     pipe = pipeline_mod.get_flf_pipeline()
     generator, used_seed = make_generator(req.get("seed", -1))
@@ -386,28 +393,40 @@ def run_flf(req: dict, first_image: Image.Image, last_image: Image.Image) -> dic
     audio_out = (req.get("audio_out") or DEFAULT_AUDIO_OUT).strip().lower()
     if audio_out not in ("on", "off"):
         raise ValueError(f"audio_out は on/off のいずれかです(flf): {audio_out!r}")
+    upscale = bool(int(req.get("upscale") or 0))
 
     conditions = [
         LTX2VideoCondition(frames=first_image, index=0, strength=strength),
         LTX2VideoCondition(frames=last_image, index=-1, strength=strength),
     ]
 
+    call_kwargs = dict(
+        conditions=conditions,
+        prompt=req["prompt"],
+        negative_prompt=negative_prompt,
+        height=height,
+        width=width,
+        num_frames=num_frames,
+        frame_rate=fps,
+        num_inference_steps=steps,
+        guidance_scale=guidance_scale,
+        generator=generator,
+        callback_on_step_end=_progress_callback("ltx2_flf", steps),
+    )
+
     _reset_vram_stats()
     t0 = time.time()
-    with torch.no_grad():
-        result = pipe(
-            conditions=conditions,
-            prompt=req["prompt"],
-            negative_prompt=negative_prompt,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-            frame_rate=fps,
-            num_inference_steps=steps,
-            guidance_scale=guidance_scale,
-            generator=generator,
-            callback_on_step_end=_progress_callback("ltx2_flf", steps),
-        )
+    if upscale:
+        # 低解像度denoise → latent 2x upsample → tiled decode(i2v/t2vと共通機構)。
+        # 高解像度の直接denoiseはattention中間テンソルがシーケンス長のほぼ2乗で膨らみ、
+        # 1280×704×121フレームで87GB超のCUDA OOMを起こす(実測、CLAUDE.md 51番)ため
+        # 必ずこの2段経路を使うこと。
+        frames, audio = _run_upscaled(pipe, call_kwargs, fps)
+    else:
+        with torch.no_grad():
+            result = pipe(**call_kwargs)
+        frames = result.frames[0]
+        audio = getattr(result, "audio", None)
     elapsed = time.time() - t0
     peak_vram_gb = _peak_vram_gb()
     progress_mod.set_phase("decoding")
@@ -416,11 +435,9 @@ def run_flf(req: dict, first_image: Image.Image, last_image: Image.Image) -> dic
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     job_id = uuid.uuid4().hex[:8]
-    frames = result.frames[0]
     video_path, video_name = _new_output_path("ltx2_flf", "mp4", ts=ts, job_id=job_id)
     export_to_video(frames, video_path, fps=fps)
 
-    audio = getattr(result, "audio", None)
     audio_url, muxed_url, has_audio = _save_audio_and_mux(
         audio, video_path, ts, job_id, mode="ltx2_flf", audio_out=audio_out
     )
@@ -429,8 +446,8 @@ def run_flf(req: dict, first_image: Image.Image, last_image: Image.Image) -> dic
         "mode": "ltx2_flf",
         "prompt": req["prompt"],
         "negative_prompt": req.get("negative_prompt", ""),
-        "width": width,
-        "height": height,
+        "width": width * 2 if upscale else width,
+        "height": height * 2 if upscale else height,
         "num_frames": num_frames,
         "fps": fps,
         "steps": steps,
@@ -444,6 +461,7 @@ def run_flf(req: dict, first_image: Image.Image, last_image: Image.Image) -> dic
         "audio_url": audio_url,
         "has_audio": has_audio,
         "audio_out": audio_out,
+        "upscale": upscale,
     }
     meta.update(_pipeline_meta())
     return meta

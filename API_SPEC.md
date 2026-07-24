@@ -785,9 +785,13 @@ Content-Type: `multipart/form-data`。
 | `strength` | float | 任意 | `0.7` | 条件付け強度(両フレーム共通) |
 | `seed` | int | 任意 | `-1` | - |
 | `audio_out` | string | 任意 | `"on"` | `"on"` \| `"off"` |
+| `upscale` | int | 任意 | `0` | `0`(無効) \| `1`(latent upsamplerで2x空間アップスケール、2026-07-23追加) |
 
 **レスポンス例**: `/api/ltx2/t2v` と同様のキー構成 + `strength`。`mode` は `"ltx2_flf"`。
-upscaleパラメータは存在しない。
+`upscale=1` 指定時、レスポンスの `width`/`height` は要求値の2倍(実際の出力解像度)になる
+(i2v/t2vと同じ挙動)。高解像度が必要な場合は、大きな `width`/`height` を直接指定するの
+ではなく `upscale=1` を使うこと(直接denoiseはattentionメモリがフレーム数のほぼ2乗で
+増大し、1280×704×121フレームで87GB超のCUDA OOMを実測。CLAUDE.md 51番)。
 
 **curlサンプル**
 
@@ -1652,6 +1656,7 @@ curl http://localhost:8601/api/progress
 | `DS_OFFLOAD` | 全ファミリーの生成速度・VRAM | オフロードモード(`none`/`model`/`group`/`group_lowvram`)。レスポンスの`offload_mode`に反映 |
 | `DS_LTX2_OFFLOAD` | `/api/ltx2/*` | `none`(96GB機向け)/ `group`(既定、2026-07-22変更)/ `auto`(非推奨)。生成速度・ピークVRAMに直接影響。CLAUDE.md 49番参照 |
 | `DS_LTX2_TE_QUANT` | `/api/ltx2/*` | text_encoder(Gemma 3 12B)の量子化(`none`/`fp8`(既定、2026-07-22変更)/`nf4`)。VRAM削減に影響。`nf4`は別チェックポイントで品質A/B未確定 |
+| `DS_LTX2_TILED_DECODE` | `/api/ltx2/*` | `1`(既定、2026-07-23追加): 全モードのVAEデコードを常時tiled化。noneモードでの長尺(361f)・高解像度の一括デコードOOMを解消(CLAUDE.md 52番)。`0`で旧動作 |
 | `DS_JOYAI_TE_OFFLOAD` | `/api/joyai/edit` | transformer⇔text_encoder相互排他スワップの有効化(既定`auto`で実質常時有効) |
 | `DS_ZIMAGE_PRECISION` | `/api/zimage/*` | `bf16`(既定)\| `bnb-4bit` |
 | `DS_FLUX2_PRECISION` | `/api/flux2/*` | `bnb-4bit`(既定)\| `bf16` |

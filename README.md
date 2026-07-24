@@ -224,8 +224,9 @@ Mage-Flow を使う場合はラッパーサービスも起動します(別プロ
 | `DS_LLM_URL` | `http://127.0.0.1:64652` | プロンプト支援機能が呼ぶ、OpenAI互換 `/v1/chat/completions` を持つローカルLLMサーバのURL(任意機能、無くても他機能に影響なし) |
 | `DS_CHARSHEET_METHOD` | `bf16-group` | キャラクターシート生成の実装方式切替 |
 | `DS_LTX2_CKPT_PATH` / `DS_LTX2_GEMMA_PATH` | ComfyUIモデルディレクトリ配下 | LTX-2.3 のチェックポイント・text_encoderパス |
-| `DS_LTX2_OFFLOAD` | `group`(2026-07-22変更) | LTX-2.3 のオフロードモード(`none` / `group` / `auto`)。`auto`は空きVRAMの瞬間値で判定するため他ファミリー切替直後・高解像度多フレーム時にOOMしやすく非推奨(CLAUDE.md 49番) |
+| `DS_LTX2_OFFLOAD` | `group`(2026-07-22変更) | LTX-2.3 のオフロードモード(`none` / `group` / `auto`)。`auto`は空きVRAMの瞬間値で判定するため他ファミリー切替直後にOOMしやすく非推奨(CLAUDE.md 49番)。従来noneモードは長尺(241f超)や768×448級でVAEデコードOOMがあったが、tiled化(下記`DS_LTX2_TILED_DECODE`)により解消: noneで361f(15秒)・upscaleとも生成可、短尺はgroup比10倍超高速(96GB専有時の選択肢。既定はgroupのまま) |
 | `DS_LTX2_TE_QUANT` | `fp8`(2026-07-22変更) | LTX-2.3 text_encoder の量子化(`none` / `fp8` / `nf4`)。`nf4`はGoogle製QAT版の別チェックポイントで品質A/B未確定のため既定に非採用(CLAUDE.md 49番) |
+| `DS_LTX2_TILED_DECODE` | `1`(2026-07-23追加) | LTX-2.3 の全VAEデコード経路(全モード、upscale有無問わず)を常時tiled化。noneモード長尺OOMの正体だった一括VAEデコード(23.8GiB単発要求)を解消(CLAUDE.md 52番)。`0`で旧動作 |
 | `DS_MAGEFLOW_URL` | `http://127.0.0.1:8602` | 本体サーバが Mage-Flow ラッパーサービスへ接続するURL(ポートはハードコードしない。ラッパー未起動時は `/api/mageflow/*` 生成系が502) |
 | `DS_MAGEFLOW_PORT` / `DS_MAGEFLOW_HOST` | `8602` / `127.0.0.1` | `run_mageflow.sh` がラッパーサービスを起動するポート/ホスト |
 

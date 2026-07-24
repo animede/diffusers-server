@@ -128,6 +128,28 @@ def _load_base_pipeline_locked(load_lora: bool = False) -> None:
     vae, audio_vae = convert.load_vae_pair(config.ckpt_path, device, config_repo)
     breakdown["vae"] = time.time() - tv
 
+    # VAEデコードの常時tiled化(DS_LTX2_TILED_DECODE=1既定、2026-07-23、CLAUDE.md 52番)。
+    # noneモードの長尺OOM(旧45番の「attention系」推定は誤り)の正体は「パイプライン内部の
+    # 一括VAEデコード」(512×320×361f・upscale=0で23.8GiB要求、Conv3dで失敗)と確定した
+    # ため、VAEロード時にフラグを立てて全パイプラインの内部decodeをtiled化する。
+    # - enable_tiling()(引数なし=既定タイルサイズ)は use_tiling のみ立てる。
+    #   _decode_video_latents_tiled()(43番のupscale経路)と同一のパラメータ。
+    # - 時間方向は use_framewise_decoding=True を手動設定(39番の罠: enable_tiling()
+    #   だけでは時間方向タイルは有効にならない)。
+    # - encode側への影響: enable_tiling() は use_framewise_encoding を触らないが、
+    #   diffusersの _encode() は (a) use_framewise_decoding を参照して16フレーム超の
+    #   動画encode(v2a/icloraの入力動画)を時間方向tiled化し、(b) use_tiling により
+    #   512px超の入力(条件画像encode等)を空間tiled化する。いずれも閾値ガード付きの
+    #   メモリ削減経路で、groupモードの keyframes/ia2v は従来から pipe() 全体を
+    #   tilingで包んで同じ経路を通していた(実害なしの実績あり)。既定512×320の
+    #   条件画像encodeは閾値未満のため従来と完全同一。
+    # - VAEは全パイプライン(t2v/i2v/flf/keyframes/ia2v/v2a/iclora)で参照共有される
+    #   ため、ここで一度立てれば全モードに効く。
+    if getattr(config, "tiled_decode", True):
+        vae.enable_tiling()
+        vae.use_framewise_decoding = True
+        print("[families.ltx2] VAE tiled decode enabled (DS_LTX2_TILED_DECODE=1)")
+
     # 2. transformer + connectors(同一チェックポイント読み取りパスを共有)
     tt = time.time()
     transformer_load_device = "cpu" if offload_mode == "group" else device

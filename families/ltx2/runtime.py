@@ -74,6 +74,16 @@ DEFAULT_OFFLOAD = "group"
 DEFAULT_OFFLOAD_FREE_VRAM_THRESHOLD_GB = 75.0
 DEFAULT_GROUP_OFFLOAD_MIN_RAM_GB = 40.0
 
+# VAEデコードの常時tiled化(2026-07-23追加、CLAUDE.md 52番)。
+# noneモードの長尺OOM(旧45番で「attention系」と推定していたもの)の正体は
+# 「パイプライン内部の一括VAEデコード」だったことがA/B検証で確定した
+# (512×320×361f・upscale=0で23.8GiB要求のOOM、失敗箇所はautoencoder_kl_ltx2.pyの
+# Conv3d。同一denoise+tiled decodeなら4倍画素の出力でも完走)。
+# 既定1=VAEロード時に enable_tiling()+use_framewise_decoding=True を立て、
+# 全モード(t2v/i2v/flf/keyframes/ia2v/v2a/iclora、upscale有無問わず)のデコードを
+# tiled化する。0で旧動作(upscale経路とgroupモードの個別ラップのみtiled)に戻せる。
+DEFAULT_TILED_DECODE = True
+
 # 蒸留モデル既定値(guidance_scale=1.0固定 = CFGなし、タスク指示どおり)。
 DEFAULT_STEPS = 8
 DEFAULT_GUIDANCE_SCALE = 1.0
@@ -154,6 +164,8 @@ class LTX2RuntimeConfig:
     DS_LTX2_GROUP_OFFLOAD_BLOCKS : group offload の num_blocks_per_group(既定1)
     DS_LTX2_ICLORA_PATH     : IC-LoRA(MergeGreen)safetensorsの絶対パス
     DS_LTX2_ICLORA_STRENGTH : IC-LoRA の adapter weight(既定0.9)
+    DS_LTX2_TILED_DECODE    : "1"(既定、VAEデコードを常時tiled化) | "0"(旧動作。
+                              エスケープハッチ、上記DEFAULT_TILED_DECODEのコメント参照)
     DS_DEVICE           : "cuda"(既定、core.config 共通)
     """
 
@@ -178,6 +190,7 @@ class LTX2RuntimeConfig:
             "DS_LTX2_GROUP_OFFLOAD_MIN_RAM_GB", DEFAULT_GROUP_OFFLOAD_MIN_RAM_GB
         )
         self.group_offload_blocks = int(env_str("DS_LTX2_GROUP_OFFLOAD_BLOCKS", "1"))
+        self.tiled_decode = env_bool("DS_LTX2_TILED_DECODE", DEFAULT_TILED_DECODE)
         self.device = env_str("DS_DEVICE", "cuda")
         self.attention_backend = env_str("DS_ATTN", "default").strip().lower()
         self.compile = env_bool("DS_COMPILE", False)
@@ -188,7 +201,7 @@ class LTX2RuntimeConfig:
             f"offload_free_vram_threshold_gb={self.offload_free_vram_threshold_gb}, "
             f"group_offload_min_ram_gb={self.group_offload_min_ram_gb}, "
             f"group_offload_blocks={self.group_offload_blocks}, te_quant={self.te_quant!r}, "
-            f"device={self.device!r}, "
+            f"tiled_decode={self.tiled_decode}, device={self.device!r}, "
             f"attention_backend={self.attention_backend!r}, compile={self.compile})"
         )
 
