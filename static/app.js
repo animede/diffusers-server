@@ -2421,3 +2421,160 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     refreshStatus();
   }
 });
+
+// ============================================================================
+// シーンアングル(scene_angles)タブ(2026-07-24追加)。
+// 1枚のシーン画像 → カメラ指示プロンプト8種で8アングル生成(ジョブ式)。
+// charsheetタブの簡易版(split/refine/undo/シート合成なし)。
+// ============================================================================
+(() => {
+  const form = document.getElementById("sa-form");
+  if (!form) return;
+
+  const fileInput = document.getElementById("sa-file-input");
+  const seedInput = document.getElementById("sa-seed-input");
+  const generateBtn = document.getElementById("sa-generate-btn");
+  const errorEl = document.getElementById("sa-error-message");
+  const statusEl = document.getElementById("sa-status-message");
+  const progressWrap = document.getElementById("sa-progress");
+  const progressFill = document.getElementById("sa-progress-fill");
+  const progressCount = document.getElementById("sa-progress-count");
+  const viewsGrid = document.getElementById("sa-views-grid");
+  const checkboxesEl = document.getElementById("sa-angle-checkboxes");
+
+  let pollTimer = null;
+  let busy = false;
+
+  const showError = (msg) => {
+    errorEl.textContent = msg;
+    errorEl.classList.toggle("hidden", !msg);
+  };
+  const showStatus = (msg) => {
+    statusEl.textContent = msg;
+    statusEl.classList.toggle("hidden", !msg);
+  };
+
+  // アングル一覧をサーバから取得してチェックボックスを構築(既定: 全チェック)
+  fetch("/api/scene_angles/angles")
+    .then((r) => r.json())
+    .then((data) => {
+      checkboxesEl.innerHTML = "";
+      for (const a of data.angles) {
+        const label = document.createElement("label");
+        label.style.fontWeight = "normal";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.value = a.key;
+        cb.className = "sa-angle-cb";
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(` ${a.label_ja}`));
+        checkboxesEl.appendChild(label);
+      }
+    })
+    .catch(() => {
+      checkboxesEl.innerHTML = "<p class='form-error'>アングル一覧の取得に失敗しました</p>";
+    });
+
+  function renderViews(views) {
+    viewsGrid.innerHTML = "";
+    const statusText = {
+      queued: "待機中", running: "生成中", done: "完了", error: "エラー",
+    };
+    for (const v of views) {
+      const tile = document.createElement("div");
+      tile.className = "view-tile";
+      const wrap = document.createElement("div");
+      wrap.className = "view-tile-image-wrap";
+      if (v.status === "done" && v.url) {
+        const img = document.createElement("img");
+        img.src = v.url + "?t=" + Date.now();
+        img.alt = v.label_ja;
+        wrap.appendChild(img);
+      } else if (v.status === "running") {
+        const spinner = document.createElement("div");
+        spinner.className = "spinner";
+        wrap.appendChild(spinner);
+      }
+      tile.appendChild(wrap);
+      const label = document.createElement("div");
+      label.className = "view-tile-label";
+      label.innerHTML = `<span class="ja">${v.label_ja}</span> <span class="en">${v.label_en}</span>`;
+      tile.appendChild(label);
+      const st = document.createElement("div");
+      st.className = "view-tile-status";
+      st.textContent = statusText[v.status] || v.status;
+      tile.appendChild(st);
+      viewsGrid.appendChild(tile);
+    }
+  }
+
+  async function pollJob(jobId) {
+    try {
+      const resp = await fetch(`/api/scene_angles/jobs/${jobId}`);
+      if (!resp.ok) return;
+      const job = await resp.json();
+      renderViews(job.views);
+      if (job.status === "running" || job.status === "queued") {
+        showStatus(`生成中... (${job.progress} / ${job.total} アングル完了)`);
+        progressWrap.classList.remove("hidden");
+        progressCount.textContent = `${job.progress} / ${job.total}`;
+        progressFill.style.width = `${(job.progress / Math.max(1, job.total)) * 100}%`;
+        return;
+      }
+      // done / error で終了
+      clearInterval(pollTimer);
+      pollTimer = null;
+      busy = false;
+      generateBtn.disabled = false;
+      progressWrap.classList.add("hidden");
+      if (job.status === "done") {
+        showStatus("完了しました。");
+      } else {
+        showStatus("");
+        showError("生成エラー: " + (job.error || "不明なエラー"));
+      }
+    } catch (_) {
+      /* 一時的な失敗は次のポーリングに任せる */
+    }
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    showError("");
+    if (!fileInput.files || fileInput.files.length === 0) {
+      showError("入力画像を選択してください");
+      return;
+    }
+    const selected = Array.from(document.querySelectorAll(".sa-angle-cb:checked")).map((c) => c.value);
+    if (selected.length === 0) {
+      showError("アングルを1つ以上選択してください");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("image", fileInput.files[0]);
+    fd.append("seed", seedInput.value || "0");
+    // 8種全選択時は angles を省略(サーバ既定=全部)
+    if (selected.length < 8) fd.append("angles", selected.join(","));
+
+    busy = true;
+    generateBtn.disabled = true;
+    showStatus("ジョブを投入中...");
+    try {
+      const resp = await fetch("/api/scene_angles/generate", { method: "POST", body: fd });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      pollTimer = setInterval(() => pollJob(data.job_id), 1500);
+      pollJob(data.job_id);
+    } catch (err) {
+      busy = false;
+      generateBtn.disabled = false;
+      showStatus("");
+      showError(err.message);
+    }
+  });
+})();

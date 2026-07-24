@@ -194,6 +194,8 @@ Mage-Flow を使う場合はラッパーサービスも起動します(別プロ
 | `POST /api/mageflow/t2i` / `/api/mageflow/edit` | Mage-Flow T2I / Edit(別プロセスへのプロキシ、`exclusive` で排他選択) |
 | `GET /api/mageflow/status` / `POST /api/mageflow/unload` | Mage-Flow ラッパーの状態確認 / 解放 |
 | `POST /api/charsheet/generate` 他 | キャラクターシート生成ジョブ(8方向) |
+| `POST /api/scene_angles/generate` 他 | シーンアングル生成ジョブ(1枚のシーン画像→カメラ8アングル、charsheetと同一パイプライン。2026-07-24追加) |
+| `POST /api/outpaint` | アウトペイント(画角拡張。既存インペイント流用、中央部は元画像ピクセル保証。2026-07-24追加) |
 | `POST /api/prompt/enhance` / `/api/prompt/translate` | LLM プロンプト支援(要別途LLMサーバ) |
 | `GET /api/status` | 全ファミリーのロード状態・VRAM |
 | `POST /api/unload` | モデルの明示的アンロード |

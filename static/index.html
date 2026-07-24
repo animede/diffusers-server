@@ -39,6 +39,7 @@
     <button class="tab-btn" data-tab="layered">Layered(レイヤー分解)</button>
     <button class="tab-btn" data-tab="removebg">背景削除</button>
     <button class="tab-btn" data-tab="charsheet">キャラシート</button>
+    <button class="tab-btn" data-tab="scene-angles">シーンアングル</button>
     <button class="tab-btn" data-tab="ltx2">動画(LTX-2.3)</button>
     <button class="tab-btn" data-tab="mageflow">Mage-Flow</button>
   </nav>
@@ -567,6 +568,51 @@
             <button id="cs-download-sheet-btn" class="secondary">シート画像のみダウンロード</button>
             <button id="cs-remove-bg-all-btn" class="secondary">全方向の背景を削除</button>
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-scene-angles">
+    <h2>シーンアングル: 1枚のシーン画像から8アングルを生成</h2>
+    <p class="panel-note">
+      カメラ指示プロンプト8種(クローズアップ / 広角 / 左右45・90度回転 / 俯瞰 / ローアングル)の
+      Editで同一シーンのアングル違いを生成します。モデル構成はキャラシートと同一
+      (Qwen-Image-Edit-2511 bf16 + Lightning / Multiple-angles LoRA、DS_CHARSHEET_METHODに従う)。
+      ComfyUIワークフロー templates-1_click_multiple_scene_angles-v1.0 のdiffusers版です。
+    </p>
+
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <form id="sa-form" class="gen-form">
+          <label>入力シーン画像
+            <input type="file" id="sa-file-input" name="image" accept="image/*" required>
+          </label>
+          <fieldset id="sa-angle-fieldset" style="border:1px solid #444; border-radius:6px; padding:8px 12px;">
+            <legend>生成するアングル(チェックしたものだけ生成)</legend>
+            <div id="sa-angle-checkboxes" class="form-grid"></div>
+          </fieldset>
+          <div class="form-grid">
+            <label>seed(0=ランダム) <input type="number" id="sa-seed-input" value="0" step="1"></label>
+          </div>
+          <button type="submit" class="primary-btn" id="sa-generate-btn">シーンアングル生成</button>
+          <p id="sa-error-message" class="form-error hidden"></p>
+          <p id="sa-status-message" class="status-message hidden"></p>
+          <div id="sa-progress" class="progress-bar-wrap hidden">
+            <div class="progress-bar-label">
+              <span class="progress-bar-phase">生成中</span>
+              <span class="progress-bar-count" id="sa-progress-count"></span>
+            </div>
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" id="sa-progress-fill"></div>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="gen-col-right">
+        <div id="sa-views-panel">
+          <h3>アングル別ビュー</h3>
+          <div id="sa-views-grid" class="views-grid"></div>
         </div>
       </div>
     </div>

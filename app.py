@@ -35,6 +35,7 @@ import families.ltx2 as ltx2  # noqa: F401  (import 副作用で registry に登
 import families.joyai as joyai  # noqa: F401  (import 副作用で registry に登録)
 from apps.charsheet import router as charsheet_router
 from apps.charsheet.bg import remove_background
+from apps.scene_angles import router as scene_angles_router
 from core import llm, progress as progress_mod
 from core.registry import registry
 
@@ -380,6 +381,110 @@ async def generate_inpaint(
             "_mask_image": mask_img,
         },
     )
+
+
+# ============================================================================
+# アウトペイント(既存インペイント機構の流用による画角拡張、2026-07-24追加、
+# CLAUDE.md 54番。キャンバス配置→エッジ延長充填→フェザーマスク→既存インペイント→
+# 中央再合成。ヘルパーは apps/outpaint.py)
+# ============================================================================
+@app.post("/api/outpaint")
+async def generate_outpaint(
+    image: UploadFile = File(...),
+    width: int = Form(1280),
+    height: int = Form(720),
+    prompt: str = Form(""),
+    negative_prompt: str = Form(" "),
+    seed: int = Form(-1),
+    feather: int = Form(64),
+    engine: str = Form("qwen"),
+    steps: int = Form(30),
+    cfg: float = Form(4.0),
+):
+    """アウトペイント: 入力画像をアスペクト維持で中央配置し、余白帯を既存インペイントで
+    生成して指定サイズへ拡張する。最後に元画像の中央部をピクセルそのまま再合成する
+    (フェザー帯より内側は完全無傷)。
+
+    - `engine`: "qwen"(既定、A/B検証で明確に優位)| "zimage"(文脈無視の傾向があり
+      非推奨、選択肢としてのみ残す)
+    - `prompt`: 空でも可(空のときは周囲の文脈のみで生成される。シーン記述を渡すと
+      左右の内容を誘導できる)
+    - 左右拡張(縦長→横長)・上下拡張(横長→縦長)の両方に対応(フィット配置で
+      帯が出る軸が自動的に決まる)。
+    """
+    from apps import outpaint as outpaint_mod
+
+    engine = (engine or "qwen").strip().lower()
+    if engine not in ("qwen", "zimage"):
+        raise HTTPException(status_code=400, detail="engine は qwen / zimage のいずれかです")
+
+    try:
+        contents = await image.read()
+        src_image = _open_upload_image(contents)
+        canvas, mask, paste_box = outpaint_mod.build_outpaint_canvas(
+            src_image, width, height, feather
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"画像の読み込みに失敗しました: {exc}")
+
+    if engine == "qwen":
+        meta = _generate_or_409(
+            "inpaint",
+            {
+                "prompt": prompt.strip() or " ",  # インペイントはprompt必須のため空は半角スペース
+                "negative_prompt": negative_prompt,
+                "controlnet_conditioning_scale": 1.0,
+                "steps": steps,
+                "cfg": cfg,
+                "seed": seed,
+                "_image": canvas,
+                "_mask_image": mask,
+            },
+        )
+    else:
+        meta = _generate_or_409(
+            "zimage_inpaint",
+            {
+                "prompt": prompt.strip() or " ",
+                "negative_prompt": negative_prompt,
+                "strength": 1.0,
+                "steps": 8,
+                "guidance_scale": 0.0,
+                "width": width,
+                "height": height,
+                "seed": seed,
+                "_image": canvas,
+                "_mask_image": mask,
+            },
+        )
+
+    # 中央再合成(フェザーより内側は元画像ピクセル100%を保証)して別ファイルに保存
+    generated_name = str(meta.get("image_url") or "").rsplit("/", 1)[-1]
+    generated_path = os.path.join(OUTPUTS_DIR, generated_name)
+    try:
+        generated = Image.open(generated_path)
+        final = outpaint_mod.recomposite_center(
+            generated, src_image, paste_box, feather, width, height
+        )
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_name = f"outpaint_{ts}_{uuid.uuid4().hex[:8]}.png"
+        final.save(os.path.join(OUTPUTS_DIR, out_name))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"中央再合成に失敗しました: {exc}")
+
+    meta.update(
+        mode="outpaint",
+        image_url=f"/outputs/{out_name}",
+        raw_inpaint_url=f"/outputs/{generated_name}",  # 再合成前(デバッグ用)
+        engine=engine,
+        feather=int(feather),
+        width=final.width,
+        height=final.height,
+        paste_box=list(paste_box),
+    )
+    return meta
 
 
 # ============================================================================
@@ -1295,6 +1400,13 @@ def mageflow_unload():
 # charsheet(Phase 3。apps/charsheet/ 側のルーターを /api/charsheet 接頭辞で統合)
 # ============================================================================
 app.include_router(charsheet_router, prefix="/api/charsheet")
+
+# ============================================================================
+# scene_angles(2026-07-24追加、CLAUDE.md 53番。1枚のシーン画像から
+# カメラ指示プロンプト8種で同一シーンの8アングル画像を生成するジョブ式API。
+# パイプラインは charsheet と同じ edit_angles 系グループを流用)
+# ============================================================================
+app.include_router(scene_angles_router, prefix="/api/scene_angles")
 
 
 # ============================================================================

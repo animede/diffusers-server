@@ -369,6 +369,57 @@ curl -X POST http://localhost:8601/api/inpaint \
 
 ---
 
+### POST /api/outpaint
+
+アウトペイント(画角拡張、2026-07-24追加)。入力画像をアスペクト維持でターゲット
+キャンバス中央に配置し、余白帯を既存インペイント機構で「同じシーンの続き」として
+生成する。最後に元画像の中央部(フェザー帯より内側)をピクセルそのまま再合成する
+(中央無傷の保証)。Content-Type: `multipart/form-data`。
+
+| 名前 | 型 | 必須/任意 | 既定値 | 説明・制約 |
+|---|---|---|---|---|
+| `image` | file | 必須 | - | 入力画像(スクエア/縦長→横長、横長→縦長の両方向対応) |
+| `width` | int | 任意 | `1280` | ターゲット幅 |
+| `height` | int | 任意 | `720` | ターゲット高さ |
+| `prompt` | string | 任意 | `""` | 誘導プロンプト(空可。空なら周囲文脈のみで生成) |
+| `negative_prompt` | string | 任意 | `" "` | - |
+| `seed` | int | 任意 | `-1` | - |
+| `feather` | int | 任意 | `64` | 元画像側への食い込み幅(px)。継ぎ目の滑らかさに影響 |
+| `engine` | string | 任意 | `"qwen"` | `"qwen"`(ControlNet Inpainting、A/B検証で明確に優位)\| `"zimage"`(文脈無視の傾向あり非推奨) |
+| `steps` | int | 任意 | `30` | qwenエンジン時のみ有効 |
+| `cfg` | float | 任意 | `4.0` | qwenエンジン時のみ有効 |
+
+**レスポンス例**
+
+```json
+{
+  "mode": "outpaint",
+  "engine": "qwen",
+  "feather": 64,
+  "width": 1280,
+  "height": 720,
+  "paste_box": [400, 0, 880, 720],
+  "seed": 42,
+  "elapsed_s": 22.1,
+  "peak_vram_gb": 46.3,
+  "image_url": "/outputs/outpaint_20260724_145837_b3f25c7b.png",
+  "raw_inpaint_url": "/outputs/inpaint_20260724_145836_xxxxxxxx.png"
+}
+```
+
+**curlサンプル**
+
+```bash
+curl -X POST http://localhost:8601/api/outpaint \
+  -F "image=@square.png" -F "width=1280" -F "height=720" -F "seed=42"
+```
+
+**特記事項**: `paste_box` は元画像のフィット配置矩形(left, top, right, bottom)。
+`raw_inpaint_url` は中央再合成前の生インペイント結果(デバッグ用)。フェザー帯より
+内側は元画像とピクセル完全一致することを実機検証済み(CLAUDE.md 54番)。
+
+---
+
 ### POST /api/canny
 
 補助機能(GPU不使用、排他不要)。アップロード画像からCannyエッジ画像を生成する。
@@ -1409,6 +1460,82 @@ curl -X POST http://localhost:8601/api/charsheet/jobs/1a2b3c4d5e6f/undo \
 
 8方向 + sheet.pngの一括ZIP。`Content-Type: application/zip`、
 `filename=character_sheet_{job_id}.zip`。無ければ404。
+
+---
+
+## scene_angles
+
+1枚のシーン画像から「カメラ指示プロンプト8種のEdit」で同一シーンの8アングル画像を
+生成するアプリケーション(2026-07-24追加)。`/api/scene_angles/` 配下。
+ComfyUIワークフロー `templates-1_click_multiple_scene_angles-v1.0_api.json` のdiffusers版。
+パイプラインは charsheet と同一(edit_angles系グループ、`DS_CHARSHEET_METHOD` /
+`CHARSHEET_EDIT_SIZE` に従う)。ジョブ式(バックグラウンド実行、scene_anglesジョブ同士は
+同時1件。charsheetジョブとはGPUロックの取得待ちで自然に直列化される)。
+
+アングルID(8種): `close_up`, `wide_angle`, `right_90`, `right_45`, `aerial`,
+`low_angle`, `left_90`, `left_45`
+
+### POST /api/scene_angles/generate
+
+Content-Type: `multipart/form-data`。
+
+| 名前 | 型 | 必須/任意 | 既定値 | 説明 |
+|---|---|---|---|---|
+| `image` | file | 必須 | - | 入力シーン画像(内部で~1MP相当へスケール) |
+| `seed` | int | 任意 | `0` | - |
+| `angles` | string | 任意 | `""`(=8種全部) | カンマ区切りのアングルID。未知IDは400。生成順はID指定順でなく定義順に正規化 |
+
+**レスポンス例**: `{ "job_id": "3619953819b2" }`
+
+**curlサンプル**
+
+```bash
+curl -X POST http://localhost:8601/api/scene_angles/generate \
+  -F "image=@scene.png" -F "seed=42" -F "angles=aerial,close_up"
+```
+
+### GET /api/scene_angles/jobs/{job_id}
+
+ジョブ状態(charsheetの `GET /jobs/{job_id}` と同形式のサブセット。
+`views[].key` はアングルID、`sheet_url`/`zip_url`/`refine_error` は無い)。
+
+```json
+{
+  "job_id": "3619953819b2",
+  "status": "done",
+  "progress": 8,
+  "total": 8,
+  "seed": 42,
+  "views": [
+    {"key": "close_up", "label_ja": "クローズアップ", "label_en": "Close-up",
+     "status": "done", "url": "/api/scene_angles/jobs/3619953819b2/images/close_up.png"}
+  ],
+  "error": null,
+  "created_at": "2026-07-24T09:51:24.000000",
+  "load_info": {"loaded": true, "method": "bf16-group", "angles_lora": true}
+}
+```
+
+`status`: `queued` / `running` / `done` / `error`。ディスク復元(charsheetの
+`_restore_job_from_disk` 相当)は未実装(サーバ再起動後は既存ジョブの状態参照不可、
+画像ファイル自体は `outputs/scene_angles/{job_id}/` に残る)。
+
+### GET /api/scene_angles/jobs/{job_id}/images/{key}.png
+
+各アングルの生成画像(`image/png`)。無ければ404。
+
+### GET /api/scene_angles/jobs/{job_id}/input.png
+
+前処理済み入力画像(`image/png`)。
+
+### GET /api/scene_angles/angles
+
+利用可能なアングルIDの一覧(GPU不使用): `{"angles": [{"key","label_ja","label_en"}, ...]}`
+
+**特記事項**: プロンプトは Qwen-Edit-2509-Multiple-angles LoRA のトリガー文
+(ComfyUIワークフローのノード66〜73と同一文言)。実機の目視では close_up / wide_angle /
+aerial / low_angle / 45度系は高品質で成立するが、**90度回転系はロール回転
+(画像の横倒し)として誤解釈されることがある**(2511ベース+2509用LoRAの既知の癖)。
 
 ---
 
