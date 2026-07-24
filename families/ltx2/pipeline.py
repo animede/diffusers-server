@@ -50,6 +50,7 @@ import torch
 
 from core import gpu
 from core.optimize import apply_attention_backend, apply_compile, apply_group_offload_to_transformer
+from core import progress as progress_mod
 
 from families.ltx2 import convert
 from families.ltx2 import state
@@ -248,6 +249,7 @@ def get_base_pipeline():
                 _load_base_pipeline_locked(load_lora=False)
     pipe = state.base_pipeline_state["pipe"]
     _ensure_iclora_disabled_for_non_iclora_use(pipe)
+    progress_mod.disable_diffusers_tqdm(pipe)
     return pipe
 
 
@@ -281,6 +283,7 @@ def get_i2v_pipeline():
                 ps["pipe"] = LTX2ImageToVideoPipeline(**base.components)
                 ps["loaded"] = True
                 print("[families.ltx2] LTX2ImageToVideoPipeline derived from base pipeline components")
+    progress_mod.disable_diffusers_tqdm(ps["pipe"])
     return ps["pipe"]
 
 
@@ -315,6 +318,7 @@ def get_flf_pipeline():
                 ps["pipe"] = LTX2ConditionPipeline(**components)
                 ps["loaded"] = True
                 print("[families.ltx2] LTX2ConditionPipeline (FLF) derived from base pipeline components")
+    progress_mod.disable_diffusers_tqdm(ps["pipe"])
     return ps["pipe"]
 
 
@@ -376,6 +380,7 @@ def get_iclora_pipeline():
                 ps["pipe"] = LTX2InContextPipeline(**components)
                 ps["loaded"] = True
                 print("[families.ltx2] LTX2InContextPipeline (IC-LoRA) derived from base pipeline components")
+    progress_mod.disable_diffusers_tqdm(ps["pipe"])
     return ps["pipe"]
 
 

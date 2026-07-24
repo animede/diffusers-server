@@ -29,6 +29,7 @@ import torch
 from diffusers import Flux2Pipeline
 
 from core.optimize import apply_attention_backend, apply_compile, apply_flux2_offload
+from core import progress as progress_mod
 
 from families.flux2 import state
 from families.flux2.runtime import Flux2RuntimeConfig
@@ -113,4 +114,6 @@ def get_pipeline(model: "str | None" = None):
         with state.lock:
             if not state.pipeline_state["loaded"]:
                 _load_pipeline_locked()
-    return state.pipeline_state["pipe"]
+    pipe = state.pipeline_state["pipe"]
+    progress_mod.disable_diffusers_tqdm(pipe)
+    return pipe

@@ -39,6 +39,7 @@ from core.loaders import (
     load_transformer_gguf,
 )
 from core.optimize import apply_attention_backend, apply_compile, configure_transformer_offload
+from core import progress as progress_mod
 from core.resolve import COMFYUI_MODELS_DIR, resolve_model_path
 
 from families.qwen_image import state
@@ -368,7 +369,9 @@ def get_t2i_pipeline(model: "str | None" = None) -> QwenImagePipeline:
         with state.lock:
             if not state.t2i_group["loaded"]:
                 _load_t2i_group_locked()
-    return state.t2i_group["t2i_pipe"]
+    pipe = state.t2i_group["t2i_pipe"]
+    progress_mod.disable_diffusers_tqdm(pipe)
+    return pipe
 
 
 def get_i2i_pipeline(model: "str | None" = None) -> QwenImageImg2ImgPipeline:
@@ -390,4 +393,6 @@ def get_i2i_pipeline(model: "str | None" = None) -> QwenImageImg2ImgPipeline:
         with state.lock:
             if not state.t2i_group["loaded"]:
                 _load_t2i_group_locked()
-    return state.t2i_group["i2i_pipe"]
+    pipe = state.t2i_group["i2i_pipe"]
+    progress_mod.disable_diffusers_tqdm(pipe)
+    return pipe

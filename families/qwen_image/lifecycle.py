@@ -29,6 +29,10 @@ def unload(target: str = "all") -> dict:
     先にControlNetグループを解放してから t2i グループを解放する(順序が逆だと transformer への
     参照がControlNet側に残ったままになり、VRAMが実際には解放されない)。
 
+    2026-07-24修正(CLAUDE.md 56番): target が "all" 以外でも、解放後に他のどの
+    グループもロードされていなければ共有コンポーネント(vae/text_encoder/tokenizer)も
+    併せて解放する(unload_shared_if_unused() と同じ判定。詳細は下記の該当コメント参照)。
+
     抽出元: pipeline_manager.py unload()(行1540-1621)。
     """
     freed = []
@@ -115,9 +119,17 @@ def unload(target: str = "all") -> dict:
             layered_group["quant"] = None
             layered_group["lightning_merged"] = False
             freed.append("layered")
+        # 共有コンポーネント(vae/text_encoder/tokenizer、~15.7GB)の解放条件。
+        # 2026-07-24修正(CLAUDE.md 56番、タスク2): 従来は target=="all" のときしか
+        # 解放しなかったため、target="t2i" 等の個別指定では共有が常駐したまま残り、
+        # 実運用で「outpaint実行前に何度もtarget=allを要する」というOOM回避の手間が
+        # 発生していた。unload_shared_if_unused()(edit⇔edit_angles切替対策、22番)と
+        # 同じ判定に一般化する: target が何であれ、この unload() 呼び出しの結果として
+        # 他のどのグループもロードされていなければ、共有も一緒に解放する
+        # (新たに何かロードする際は各 get_*_pipeline() が冪等に再ロードするため実害はない。
+        # 再ロードコストは実測 ~25秒、22番参照)。
         if (
-            target == "all"
-            and shared["loaded"]
+            shared["loaded"]
             and not t2i_group["loaded"]
             and not edit_group["loaded"]
             and not edit_angles_group["loaded"]

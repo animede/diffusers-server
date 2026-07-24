@@ -219,6 +219,7 @@ Mage-Flow を使う場合はラッパーサービスも起動します(別プロ
 | `DS_COMPILE` | `0` | `1` で `torch.compile` を有効化 |
 | `DS_QUANT` | `fp8-lightning` | Qwen系の量子化方式。`fp8-lightning` / `gguf-q4_k_m` 等 / `none`(bf16) |
 | `DS_T2I_MODEL` | `2512` | T2I既定モデル(`2512` / `qwen-image`) |
+| `DS_QWEN_TILED_VAE` | `1`(2026-07-24追加) | Qwen-Image系の共有VAE(t2i/i2i/edit/edit_angles系/controlnet/controlnet_inpaint)のencode/decodeを常時tiled化。`/api/outpaint`(1280×720キャンバス等)の大きな画像をVAEエンコードする際のOOM対策(CLAUDE.md 56番)。`0`で旧動作。Layered VAEは専用チェックポイント(8番)のため対象外 |
 | `DS_VRAM_FREE_THRESHOLD_GB` / `DS_VRAM_LOW_THRESHOLD_GB` | GPU の空きVRAMに応じて調整 | オフロードモードの自動判定しきい値。お使いのGPUのVRAM容量に合わせて調整してください |
 | `DS_FLUX2_PRECISION` | `bnb-4bit` | FLUX.2 の量子化精度(`bnb-4bit` / `bf16`) |
 | `DS_ZIMAGE_PRECISION` | `bf16` | Z-Image の精度(`bf16` / `bnb-4bit`) |
@@ -231,6 +232,7 @@ Mage-Flow を使う場合はラッパーサービスも起動します(別プロ
 | `DS_LTX2_TILED_DECODE` | `1`(2026-07-23追加) | LTX-2.3 の全VAEデコード経路(全モード、upscale有無問わず)を常時tiled化。noneモード長尺OOMの正体だった一括VAEデコード(23.8GiB単発要求)を解消(CLAUDE.md 52番)。`0`で旧動作 |
 | `DS_MAGEFLOW_URL` | `http://127.0.0.1:8602` | 本体サーバが Mage-Flow ラッパーサービスへ接続するURL(ポートはハードコードしない。ラッパー未起動時は `/api/mageflow/*` 生成系が502) |
 | `DS_MAGEFLOW_PORT` / `DS_MAGEFLOW_HOST` | `8602` / `127.0.0.1` | `run_mageflow.sh` がラッパーサービスを起動するポート/ホスト |
+| `DS_TERMINAL_PROGRESS` | `0`(2026-07-24追加) | `1` でサーバ起動ターミナル(stderr)へ生成中の進捗バーを表示(`\r`上書き、完了時は確定行)。charsheet/scene_angles は「direction i/n」も表示。ON時、diffusers パイプライン自前の tqdm(denoiseの`25%\|██▌\|`表示)は `set_progress_bar_config(disable=True)` で抑制(HFダウンロードのtqdmは対象外)。uvicornログとの行混在あり。詳細は CLAUDE.md 55番参照 |
 
 VRAM しきい値はお使いの GPU の空き VRAM に合わせて調整してください。値を大きくしすぎると
 本来オフロード不要な構成までオフロードされ低速になり、小さくしすぎると OOM のリスクが

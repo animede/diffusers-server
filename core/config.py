@@ -186,6 +186,18 @@ def get_device(default: str = "cuda") -> str:
 
 
 # ============================================================================
+# ターミナル進捗バー(core/progress.py が参照、CLAUDE.md 55番)
+# ============================================================================
+# DS_TERMINAL_PROGRESS: "0"(既定、OFF=従来挙動どおり何も出力しない)/ "1"(ON)。
+# ON時、core/progress.py の状態更新(start_loading/start_generating/update_step/
+# set_phase/finish)に同期して、サーバ起動ターミナルの stderr へ 0.1〜0.2秒間隔で
+# 1行プログレスバー(\r で上書き、finish時のみ確定行として改行)を描画する。
+# 既定 OFF のままなら core/progress.py・各ファミリーの生成経路は一切変化しない
+# (このフラグを読む分岐が追加されるのみで、フラグが False の間は早期returnする)。
+TERMINAL_PROGRESS = env_bool("DS_TERMINAL_PROGRESS", False)
+
+
+# ============================================================================
 # Edit系: text_encoder CPU退避(families/qwen_image/edit.py 等が参照)
 # ============================================================================
 # DS_EDIT_TE_OFFLOAD: "auto"(既定)/ "on" / "off"。

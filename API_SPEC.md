@@ -376,6 +376,12 @@ curl -X POST http://localhost:8601/api/inpaint \
 生成する。最後に元画像の中央部(フェザー帯より内側)をピクセルそのまま再合成する
 (中央無傷の保証)。Content-Type: `multipart/form-data`。
 
+**実行前の安全策(2026-07-24追加、CLAUDE.md 56番)**: 生成本体に入る前に、必ず
+`target=all`相当で登録済み全ファミリーを解放してから対象パイプラインをロードし直す
+(48GB専有機での実機OOM対策)。他ファミリーが元々未ロードなら実害はほぼ無いが、
+何かロード済みの場合は解放+再ロード分(実測: 空きVRAM十分な状態からでも
+毎回+約50秒)のオーバーヘッドが常に発生する。
+
 | 名前 | 型 | 必須/任意 | 既定値 | 説明・制約 |
 |---|---|---|---|---|
 | `image` | file | 必須 | - | 入力画像(スクエア/縦長→横長、横長→縦長の両方向対応) |
@@ -401,7 +407,7 @@ curl -X POST http://localhost:8601/api/inpaint \
   "paste_box": [400, 0, 880, 720],
   "seed": 42,
   "elapsed_s": 22.1,
-  "peak_vram_gb": 46.3,
+  "peak_vram_gb": 39.4,
   "image_url": "/outputs/outpaint_20260724_145837_b3f25c7b.png",
   "raw_inpaint_url": "/outputs/inpaint_20260724_145836_xxxxxxxx.png"
 }
@@ -417,6 +423,8 @@ curl -X POST http://localhost:8601/api/outpaint \
 **特記事項**: `paste_box` は元画像のフィット配置矩形(left, top, right, bottom)。
 `raw_inpaint_url` は中央再合成前の生インペイント結果(デバッグ用)。フェザー帯より
 内側は元画像とピクセル完全一致することを実機検証済み(CLAUDE.md 54番)。
+`peak_vram_gb` は共有VAEのtiled化(`DS_QWEN_TILED_VAE`既定`1`、CLAUDE.md 56番)後の
+実測値(旧実測46.3GBから約7GB削減、48GB専有機でのOOM対策)。
 
 ---
 
@@ -1687,6 +1695,13 @@ curl http://localhost:8601/api/status
 `target="all"`は登録済み全ファミリーを一括解放する。`target`が未対応の値だと400
 (「target は t2i / edit / controlnet / layered / flux2 / zimage / ltx2 / joyai / all のいずれかです」)。
 
+**部分解放時の共有コンポーネント解放(2026-07-24変更、CLAUDE.md 56番)**:
+`target="t2i"` 等 qwen_image 内の個別グループを指定した場合、解放後に
+qwen_imageファミリー内の他のどのグループ(t2i/edit/edit_angles/edit_angles_bf16/
+edit_angles_bf16group/layered)もロードされていなければ、共有コンポーネント
+(vae/text_encoder/tokenizer、~15.7GB)も併せて解放する(旧実装は`target="all"`
+指定時のみ共有を解放しており、個別指定では常駐したまま残っていた)。
+
 **curlサンプル**
 
 ```bash
@@ -1789,5 +1804,6 @@ curl http://localhost:8601/api/progress
 | `DS_FLUX2_PRECISION` | `/api/flux2/*` | `bnb-4bit`(既定)\| `bf16` |
 | `DS_LLM_URL` | `/api/prompt/enhance`, `/api/prompt/translate` | LLMサーバの接続先。未接続だと502 |
 | `DS_COMFYUI_DIR` | ほぼ全ての生成系 | モデル重みの優先探索先(ComfyUIディレクトリ) |
+| `DS_TERMINAL_PROGRESS` | 全生成系(API応答自体は無変更) | `0`(既定)\| `1`(2026-07-24追加)。`1`でサーバ起動ターミナル(stderr)へ進捗バーを描画するのみで、レスポンスJSON・挙動・速度には影響しない(CLAUDE.md 55番) |
 
 詳細な既定値・後方互換の旧環境変数名・調整根拠は `README.md` の「環境変数一覧」表を参照。

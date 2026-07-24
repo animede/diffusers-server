@@ -20,6 +20,8 @@ from diffusers import (
     QwenImageControlNetPipeline,
 )
 
+from core import progress as progress_mod
+
 from families.qwen_image import state, t2i
 from families.qwen_image.paths import BASE_REPO, CONTROLNET_INPAINT_REPO, CONTROLNET_UNION_REPO
 
@@ -115,7 +117,9 @@ def get_controlnet_pipeline() -> QwenImageControlNetPipeline:
         with state.lock:
             if not state.controlnet_union_group["loaded"]:
                 _load_controlnet_union_group_locked()
-    return state.controlnet_union_group["pipe"]
+    pipe = state.controlnet_union_group["pipe"]
+    progress_mod.disable_diffusers_tqdm(pipe)
+    return pipe
 
 
 def get_controlnet_inpaint_pipeline() -> QwenImageControlNetInpaintPipeline:
@@ -127,4 +131,6 @@ def get_controlnet_inpaint_pipeline() -> QwenImageControlNetInpaintPipeline:
         with state.lock:
             if not state.controlnet_inpaint_group["loaded"]:
                 _load_controlnet_inpaint_group_locked()
-    return state.controlnet_inpaint_group["pipe"]
+    pipe = state.controlnet_inpaint_group["pipe"]
+    progress_mod.disable_diffusers_tqdm(pipe)
+    return pipe

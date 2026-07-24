@@ -72,6 +72,7 @@ from transformers import Qwen2VLProcessor
 
 from core.loaders import load_lora_adapters_and_cast_to_fp8, load_transformer_from_config
 from core.optimize import apply_attention_backend, apply_compile
+from core import progress as progress_mod
 from core.resolve import resolve_model_path
 
 from families.qwen_image import state
@@ -203,4 +204,6 @@ def get_edit_angles_bf16_pipeline() -> QwenImageEditPlusPipeline:
         with state.lock:
             if not state.edit_angles_bf16_group["loaded"]:
                 _load_edit_angles_bf16_group_locked()
-    return state.edit_angles_bf16_group["edit_pipe"]
+    pipe = state.edit_angles_bf16_group["edit_pipe"]
+    progress_mod.disable_diffusers_tqdm(pipe)
+    return pipe

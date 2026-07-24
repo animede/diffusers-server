@@ -40,6 +40,8 @@ class RuntimeConfig:
     DS_T2I_MODEL(旧 QWENIMG_T2I_MODEL) : "2512"(このファミリーの既定。公式2512 fp8-lightning fuse)/
                        "qwen-image"(旧値 "2512-4bit" は後方互換で "2512" 扱い)
     DS_LAYERED_QUANT(旧 QWENIMG_LAYERED_QUANT) : "fp8-lightning"(既定)
+    DS_QWEN_TILED_VAE              : "1"(既定、共有VAEのencode/decodeを常時tiled化。
+                       CLAUDE.md 56番。outpaint等の大キャンバスVAEエンコードOOM対策) / "0"(旧動作)
     """
 
     def __init__(self):
@@ -50,12 +52,14 @@ class RuntimeConfig:
         self.quant = env_str("DS_QUANT", DEFAULT_QUANT).strip().lower()
         self.t2i_model = env_str("DS_T2I_MODEL", DEFAULT_T2I_MODEL).strip().lower()
         self.layered_quant = env_str("DS_LAYERED_QUANT", LAYERED_DEFAULT_QUANT).strip().lower()
+        self.tiled_vae = env_bool("DS_QWEN_TILED_VAE", True)
 
     def __repr__(self):
         return (
             f"RuntimeConfig(offload={self.offload!r}, attention_backend={self.attention_backend!r}, "
             f"compile={self.compile}, device={self.device!r}, quant={self.quant!r}, "
-            f"t2i_model={self.t2i_model!r}, layered_quant={self.layered_quant!r})"
+            f"t2i_model={self.t2i_model!r}, layered_quant={self.layered_quant!r}, "
+            f"tiled_vae={self.tiled_vae})"
         )
 
 

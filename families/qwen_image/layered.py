@@ -26,6 +26,7 @@ from core.loaders import (
     load_transformer_gguf,
 )
 from core.optimize import apply_attention_backend, apply_compile, configure_transformer_offload
+from core import progress as progress_mod
 from core.resolve import COMFYUI_MODELS_DIR, resolve_model_path
 
 from families.qwen_image import state
@@ -117,6 +118,12 @@ def _load_layered_group_locked() -> None:
     print(f"[families.qwen_image] loading Layered vae (dedicated, RGBA) from {LAYERED_REPO}/vae")
     vae = AutoencoderKLQwenImage.from_pretrained(LAYERED_REPO, subfolder="vae", torch_dtype=torch.bfloat16)
     vae.to("cuda" if torch.cuda.is_available() else "cpu")  # 小さい(約250MB)ため常にフルGPU常駐
+    # DS_QWEN_TILED_VAE(CLAUDE.md 56番)は対象外: このVAEは重み自体が約250MBと小さく
+    # OOMの実害が無い(CLAUDE.md 8番、共有VAEと違いinput_channels=4のRGBA専用チェックポイント)。
+    # タイル化はエンコード/デコードの空間分割によるメモリ削減が目的のため、重みサイズと
+    # activation側のメモリ要求は無関係で理論上は同様に効くはずだが、RGBA画素空間のブレンド
+    # 挙動(通常RGBのblend_v/blend_hと同一コードパスだが未検証)による画質影響の実機確認が
+    # 無いため、実害の無いこのVAEには適用しない(触らない方が安全、という判断)。
 
     proc_dir = snapshot_download(repo_id=LAYERED_REPO, allow_patterns=["processor/*"])
     # AutoProcessor.from_pretrained()はこの環境だとQwen2VLProcessorへ正しく解決できないため、
@@ -172,4 +179,6 @@ def get_layered_pipeline() -> QwenImageLayeredPipeline:
         with state.lock:
             if not state.layered_group["loaded"]:
                 _load_layered_group_locked()
-    return state.layered_group["pipe"]
+    pipe = state.layered_group["pipe"]
+    progress_mod.disable_diffusers_tqdm(pipe)
+    return pipe

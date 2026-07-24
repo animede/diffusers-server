@@ -36,6 +36,7 @@ from diffusers import ZImageImg2ImgPipeline, ZImageInpaintPipeline, ZImagePipeli
 
 from core.loaders import load_transformer_from_config
 from core.optimize import apply_attention_backend, apply_compile, apply_flux2_offload
+from core import progress as progress_mod
 from core.resolve import resolve_comfyui_path
 
 from families.z_image import state
@@ -154,7 +155,9 @@ def get_base_pipeline():
         with state.lock:
             if not state.base_pipeline_state["loaded"]:
                 _load_base_pipeline_locked()
-    return state.base_pipeline_state["pipe"]
+    pipe = state.base_pipeline_state["pipe"]
+    progress_mod.disable_diffusers_tqdm(pipe)
+    return pipe
 
 
 def get_i2i_pipeline():
@@ -169,6 +172,7 @@ def get_i2i_pipeline():
                 ps["pipe"] = ZImageImg2ImgPipeline(**base.components)
                 ps["loaded"] = True
                 print("[families.z_image] ZImageImg2ImgPipeline derived from base pipeline components")
+    progress_mod.disable_diffusers_tqdm(ps["pipe"])
     return ps["pipe"]
 
 
@@ -184,4 +188,5 @@ def get_inpaint_pipeline():
                 ps["pipe"] = ZImageInpaintPipeline(**base.components)
                 ps["loaded"] = True
                 print("[families.z_image] ZImageInpaintPipeline derived from base pipeline components")
+    progress_mod.disable_diffusers_tqdm(ps["pipe"])
     return ps["pipe"]

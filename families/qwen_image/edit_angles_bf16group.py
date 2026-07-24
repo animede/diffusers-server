@@ -62,6 +62,7 @@ from core import gpu
 from core.config import DS_CHARSHEET_GROUP_OFFLOAD_MIN_RAM_GB
 from core.loaders import load_transformer_from_config
 from core.optimize import apply_attention_backend, apply_compile, apply_group_offload_to_transformer_full
+from core import progress as progress_mod
 from core.resolve import resolve_model_path
 
 from families.qwen_image import state
@@ -220,4 +221,6 @@ def get_edit_angles_bf16group_pipeline() -> QwenImageEditPlusPipeline:
         with state.lock:
             if not state.edit_angles_bf16group_group["loaded"]:
                 _load_edit_angles_bf16group_group_locked()
-    return state.edit_angles_bf16group_group["edit_pipe"]
+    pipe = state.edit_angles_bf16group_group["edit_pipe"]
+    progress_mod.disable_diffusers_tqdm(pipe)
+    return pipe

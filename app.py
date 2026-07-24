@@ -138,6 +138,8 @@ def _generate_or_409(mode: str, request: dict, load_kwargs: "dict | None" = None
     バリデーションエラーは各ファミリーが ValueError を送出する規約とし、
     ここで 400 に変換する。
     """
+    import torch
+
     from core import gpu
 
     family_name = _MODE_TO_FAMILY[mode]
@@ -173,6 +175,21 @@ def _generate_or_409(mode: str, request: dict, load_kwargs: "dict | None" = None
         raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except torch.cuda.OutOfMemoryError as exc:
+        # 2026-07-24追加(CLAUDE.md 56番、タスク2): OOM発生時、PyTorchが確保していた
+        # キャッシュ(reserved-but-unallocated)は例外発生後も自動では解放されない。
+        # 実機で「OOM後、unloadしても reserved 40GB超・free 0.1GB」という残留を確認した
+        # (該当テンソル自体は解放されても、CUDAアロケータのキャッシュプールに留保される
+        # ため)。ここで empty_cache() を呼び、次のリクエストが空きVRAM不足で連鎖的に
+        # 失敗しないようにする(reset_peak_stats() も併せて呼び、/api/status の
+        # peak_vram_gb 表示をこのOOM分で汚さないようにする)。
+        traceback.print_exc()
+        gpu.empty_cache()
+        gpu.reset_peak_stats()
+        raise HTTPException(
+            status_code=500,
+            detail=f"{mode}生成中にGPUメモリ不足が発生しました(CUDA OutOfMemory): {exc}",
+        )
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"{mode}生成に失敗しました: {exc}")
@@ -413,10 +430,27 @@ async def generate_outpaint(
       帯が出る軸が自動的に決まる)。
     """
     from apps import outpaint as outpaint_mod
+    from core import gpu
 
     engine = (engine or "qwen").strip().lower()
     if engine not in ("qwen", "zimage"):
         raise HTTPException(status_code=400, detail="engine は qwen / zimage のいずれかです")
+
+    # 実行前の安全策(2026-07-24追加、CLAUDE.md 56番、タスク3): outpaintは1280x720等の
+    # 大キャンバスVAEエンコードを伴い、48GB専有環境では他ファミリー常駐分と合算すると
+    # OOMする実機事故があった(54番)。denoise本体に入る前に必ず target=all 相当で
+    # 全ファミリーを解放してからロードし直す保守的な方式にする(他ファミリーが元々
+    # 未ロードなら registry.unload() は何もせず実質コスト無し。qwen_image自体が
+    # 既にinpaint用途でロード済みでも、解放後の再ロードは各グループの遅延ロードが
+    # 冪等に処理する。実測コストは検証セクション参照)。
+    if not gpu.generation_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=409, detail="別の生成が実行中です。しばらく待ってから再試行してください。"
+        )
+    try:
+        registry.unload(None)
+    finally:
+        gpu.generation_lock.release()
 
     try:
         contents = await image.read()

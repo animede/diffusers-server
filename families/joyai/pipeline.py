@@ -33,6 +33,8 @@ import time
 
 import torch
 
+from core import progress as progress_mod
+
 from families.joyai import state
 from families.joyai.runtime import JoyAIRuntimeConfig
 
@@ -153,7 +155,9 @@ def get_pipeline():
         with state.lock:
             if not state.pipeline_state["loaded"]:
                 _load_pipeline_locked()
-    return state.pipeline_state["pipe"]
+    pipe = state.pipeline_state["pipe"]
+    progress_mod.disable_diffusers_tqdm(pipe)
+    return pipe
 
 
 # ============================================================================
