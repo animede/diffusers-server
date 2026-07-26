@@ -1120,6 +1120,44 @@ button:disabled {
   justify-content: center;
 }
 
+/* Tポーズ4ビュータブ: タイル下部の個別ダウンロードリンク */
+.view-tile-download {
+  display: block;
+  padding: 4px 10px 8px;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Tポーズ4ビュータブ: 出力は正方形かつ「腕を左右いっぱいに広げた」構図のため、
+   既定タイル(3:4 + object-fit:cover)では両腕が切り落とされてしまう。
+   このタブのタイルだけ 1:1 + contain にして全身を欠けなく表示する。 */
+.view-tile-square .view-tile-image-wrap {
+  aspect-ratio: 1 / 1;
+}
+
+.view-tile-square .view-tile-image-wrap img {
+  object-fit: contain;
+}
+
+/* ステータスバッジ(.view-tile-status)は position:absolute だが .view-tile 自体は
+   positioned でないため、既定ではタイルではなく祖先要素(パネル)を基準に配置されて
+   しまう。Tポーズタブでは自タイル基準にし、かつタイル下部の個別DLリンクと重ならない
+   よう右上へ寄せる。 */
+.view-tile-square {
+  position: relative;
+}
+
+.view-tile-square .view-tile-status {
+  top: 6px;
+  bottom: auto;
+}
+
+/* Tポーズタブは4枚しかないので2列にしてタイルを大きく見せる(8枚の
+   キャラシート/シーンアングルは従来どおり4列) */
+#tp-views-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .tile-btn {
   padding: 4px 12px;
   font-size: 12px;

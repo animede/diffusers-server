@@ -36,6 +36,7 @@ import families.joyai as joyai  # noqa: F401  (import 副作用で registry に�
 from apps.charsheet import router as charsheet_router
 from apps.charsheet.bg import remove_background
 from apps.scene_angles import router as scene_angles_router
+from apps.tpose import router as tpose_router
 from core import llm, progress as progress_mod
 from core.registry import registry
 
@@ -1441,6 +1442,14 @@ app.include_router(charsheet_router, prefix="/api/charsheet")
 # パイプラインは charsheet と同じ edit_angles 系グループを流用)
 # ============================================================================
 app.include_router(scene_angles_router, prefix="/api/scene_angles")
+
+# ============================================================================
+# tpose(2026-07-26追加。1枚のキャラクター画像からTポーズ4ビュー
+# (正面/背面/左前45度/右前45度)を生成するジョブ式API。image-3d の
+# マルチビュー入力・rig-service のTポーズ前提リグ向け。angles LoRA は使わず
+# 通常 Edit を使う(apps/tpose/prompts.py 冒頭のコメント参照))
+# ============================================================================
+app.include_router(tpose_router, prefix="/api/tpose")
 
 
 # ============================================================================

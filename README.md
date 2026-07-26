@@ -195,6 +195,7 @@ Mage-Flow を使う場合はラッパーサービスも起動します(別プロ
 | `GET /api/mageflow/status` / `POST /api/mageflow/unload` | Mage-Flow ラッパーの状態確認 / 解放 |
 | `POST /api/charsheet/generate` 他 | キャラクターシート生成ジョブ(8方向) |
 | `POST /api/scene_angles/generate` 他 | シーンアングル生成ジョブ(1枚のシーン画像→カメラ8アングル、charsheetと同一パイプライン。2026-07-24追加) |
+| `POST /api/tpose/generate` 他 | Tポーズ4ビュー生成ジョブ(1枚の画像→正面/背面/左前45度/右前45度。image-3dのマルチビュー入力・rig-serviceのTポーズ前提リグ向け。ビュー個別DL/ZIP・背景透過版の併産に対応。2026-07-26追加) |
 | `POST /api/outpaint` | アウトペイント(画角拡張。既存インペイント流用、中央部は元画像ピクセル保証。2026-07-24追加) |
 | `POST /api/prompt/enhance` / `/api/prompt/translate` | LLM プロンプト支援(要別途LLMサーバ) |
 | `GET /api/status` | 全ファミリーのロード状態・VRAM |

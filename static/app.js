@@ -2490,6 +2490,10 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
         const img = document.createElement("img");
         img.src = v.url + "?t=" + Date.now();
         img.alt = v.label_ja;
+        // style.css の .view-tile-image-wrap img は display:none が既定のため、
+        // 明示的に block にしないとタイルが空のまま見える(charsheetタブは
+        // 読み込み完了時に自前で block へ切り替えている)。
+        img.style.display = "block";
         wrap.appendChild(img);
       } else if (v.status === "running") {
         const spinner = document.createElement("div");
@@ -2563,6 +2567,239 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     showStatus("ジョブを投入中...");
     try {
       const resp = await fetch("/api/scene_angles/generate", { method: "POST", body: fd });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      pollTimer = setInterval(() => pollJob(data.job_id), 1500);
+      pollJob(data.job_id);
+    } catch (err) {
+      busy = false;
+      generateBtn.disabled = false;
+      showStatus("");
+      showError(err.message);
+    }
+  });
+})();
+
+// ============================================================================
+// Tポーズ4ビュー(tpose)タブ(2026-07-26追加)。
+// 1枚のキャラクター画像 → Tポーズの正面/背面/左前45度/右前45度(ジョブ式)。
+// scene_anglesタブと同型。違いは「ビューごとの個別ダウンロードリンク + ZIP一括」と
+// 手のひら/肉球/しっぽの指定UI。
+// ============================================================================
+(() => {
+  const form = document.getElementById("tp-form");
+  if (!form) return;
+
+  const fileInput = document.getElementById("tp-file-input");
+  const tailRefInput = document.getElementById("tp-tailref-input");
+  const seedInput = document.getElementById("tp-seed-input");
+  const subjectInput = document.getElementById("tp-subject-input");
+  const removeBgInput = document.getElementById("tp-removebg-input");
+  const palmsInput = document.getElementById("tp-palms-input");
+  const pawPadsInput = document.getElementById("tp-pawpads-input");
+  const tailPreset = document.getElementById("tp-tail-preset");
+  const tailInput = document.getElementById("tp-tail-input");
+  const bodyInput = document.getElementById("tp-body-input");
+  const bodyPreset = document.getElementById("tp-body-preset");
+  const extraInput = document.getElementById("tp-extra-input");
+  const generateBtn = document.getElementById("tp-generate-btn");
+  const errorEl = document.getElementById("tp-error-message");
+  const statusEl = document.getElementById("tp-status-message");
+  const progressWrap = document.getElementById("tp-progress");
+  const progressFill = document.getElementById("tp-progress-fill");
+  const progressCount = document.getElementById("tp-progress-count");
+  const viewsGrid = document.getElementById("tp-views-grid");
+  const checkboxesEl = document.getElementById("tp-view-checkboxes");
+  const zipRow = document.getElementById("tp-zip-row");
+  const zipLink = document.getElementById("tp-zip-link");
+
+  let pollTimer = null;
+  let busy = false;
+  let totalViewCount = 4;
+
+  const showError = (msg) => {
+    errorEl.textContent = msg;
+    errorEl.classList.toggle("hidden", !msg);
+  };
+  const showStatus = (msg) => {
+    statusEl.textContent = msg;
+    statusEl.classList.toggle("hidden", !msg);
+  };
+
+  // ビュー一覧・しっぽプリセットをサーバから取得(既定: 全ビューチェック)
+  fetch("/api/tpose/views")
+    .then((r) => r.json())
+    .then((data) => {
+      checkboxesEl.innerHTML = "";
+      totalViewCount = data.views.length;
+      for (const v of data.views) {
+        const label = document.createElement("label");
+        label.style.fontWeight = "normal";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.value = v.key;
+        cb.className = "tp-view-cb";
+        label.appendChild(cb);
+        const note = v.for_3d ? "(3D入力向け)" : "(参考)";
+        label.appendChild(document.createTextNode(` ${v.label_ja} ${note}`));
+        checkboxesEl.appendChild(label);
+      }
+      tailPreset.innerHTML = "";
+      for (const p of data.tail_presets) {
+        const opt = document.createElement("option");
+        opt.value = p.value;
+        opt.textContent = p.label_ja;
+        tailPreset.appendChild(opt);
+      }
+      bodyPreset.innerHTML = "";
+      for (const p of data.body_presets || []) {
+        const opt = document.createElement("option");
+        opt.value = p.value;
+        opt.textContent = p.label_ja;
+        bodyPreset.appendChild(opt);
+      }
+    })
+    .catch(() => {
+      checkboxesEl.innerHTML = "<p class='form-error'>ビュー一覧の取得に失敗しました</p>";
+    });
+
+  function renderViews(views) {
+    viewsGrid.innerHTML = "";
+    const statusText = {
+      queued: "待機中", running: "生成中", done: "完了", error: "エラー",
+    };
+    for (const v of views) {
+      const tile = document.createElement("div");
+      // view-tile-square: 正方形出力の全身(左右に広げた腕)を切らずに表示する(style.css参照)
+      tile.className = "view-tile view-tile-square";
+      const wrap = document.createElement("div");
+      wrap.className = "view-tile-image-wrap";
+      if (v.status === "done" && v.url) {
+        const img = document.createElement("img");
+        img.src = v.url + "?t=" + Date.now();
+        img.alt = v.label_ja;
+        // style.css の .view-tile-image-wrap img は display:none が既定
+        // (charsheetタブが読み込み完了時に block へ切り替える前提の指定)。
+        // ここで明示的に block にしないとタイルが空のまま見える。
+        img.style.display = "block";
+        wrap.appendChild(img);
+      } else if (v.status === "running") {
+        const spinner = document.createElement("div");
+        spinner.className = "spinner";
+        wrap.appendChild(spinner);
+      }
+      tile.appendChild(wrap);
+      const label = document.createElement("div");
+      label.className = "view-tile-label";
+      const note = v.for_3d ? "" : " <span class='en'>(参考)</span>";
+      label.innerHTML = `<span class="ja">${v.label_ja}</span> <span class="en">${v.label_en}</span>${note}`;
+      tile.appendChild(label);
+      const st = document.createElement("div");
+      st.className = "view-tile-status";
+      st.textContent = statusText[v.status] || v.status;
+      tile.appendChild(st);
+      if (v.status === "done" && v.download_url) {
+        const dl = document.createElement("a");
+        dl.href = v.download_url;
+        dl.setAttribute("download", "");
+        dl.textContent = "この画像をダウンロード";
+        dl.className = "view-tile-download";
+        tile.appendChild(dl);
+      }
+      if (v.nobg_download_url) {
+        const dl2 = document.createElement("a");
+        dl2.href = v.nobg_download_url;
+        dl2.setAttribute("download", "");
+        dl2.textContent = "背景透過版をダウンロード";
+        dl2.className = "view-tile-download";
+        tile.appendChild(dl2);
+      }
+      viewsGrid.appendChild(tile);
+    }
+  }
+
+  async function pollJob(jobId) {
+    try {
+      const resp = await fetch(`/api/tpose/jobs/${jobId}`);
+      if (!resp.ok) return;
+      const job = await resp.json();
+      renderViews(job.views);
+      if (job.zip_url) {
+        zipLink.href = job.zip_url;
+        zipRow.classList.remove("hidden");
+      }
+      if (job.status === "removing_bg") {
+        showStatus("背景を削除中...");
+        progressWrap.classList.remove("hidden");
+        progressCount.textContent = `${job.progress} / ${job.total}`;
+        progressFill.style.width = "100%";
+        return;
+      }
+      if (job.status === "running" || job.status === "queued") {
+        showStatus(`生成中... (${job.progress} / ${job.total} ビュー完了)`);
+        progressWrap.classList.remove("hidden");
+        progressCount.textContent = `${job.progress} / ${job.total}`;
+        progressFill.style.width = `${(job.progress / Math.max(1, job.total)) * 100}%`;
+        return;
+      }
+      clearInterval(pollTimer);
+      pollTimer = null;
+      busy = false;
+      generateBtn.disabled = false;
+      progressWrap.classList.add("hidden");
+      if (job.status === "done") {
+        showStatus("完了しました。image-3d へ渡すのは正面・背面の2枚です。");
+      } else {
+        showStatus("");
+        showError("生成エラー: " + (job.error || "不明なエラー"));
+      }
+    } catch (_) {
+      /* 一時的な失敗は次のポーリングに任せる */
+    }
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    showError("");
+    if (!fileInput.files || fileInput.files.length === 0) {
+      showError("入力画像を選択してください");
+      return;
+    }
+    const selected = Array.from(document.querySelectorAll(".tp-view-cb:checked")).map((c) => c.value);
+    if (selected.length === 0) {
+      showError("ビューを1つ以上選択してください");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("image", fileInput.files[0]);
+    fd.append("seed", seedInput.value || "0");
+    fd.append("subject", subjectInput.value);
+    if (removeBgInput.checked) fd.append("remove_bg", "true");
+    fd.append("palms", palmsInput.value);
+    fd.append("paw_pads", pawPadsInput.value || "auto");
+    // 自由記述があればプリセットより優先
+    fd.append("tail", (tailInput.value || "").trim() || tailPreset.value || "");
+    // 自由記述があればプリセットより優先
+    const bodyValue = (bodyInput.value || "").trim() || bodyPreset.value || "";
+    if (bodyValue) fd.append("body", bodyValue);
+    if ((extraInput.value || "").trim()) fd.append("extra_prompt", extraInput.value.trim());
+    if (tailRefInput && tailRefInput.files && tailRefInput.files.length > 0) {
+      fd.append("tail_ref", tailRefInput.files[0]);
+    }
+    // 全選択時は views を省略(サーバ既定=全部)
+    if (selected.length < totalViewCount) fd.append("views", selected.join(","));
+
+    busy = true;
+    generateBtn.disabled = true;
+    zipRow.classList.add("hidden");
+    showStatus("ジョブを投入中...");
+    try {
+      const resp = await fetch("/api/tpose/generate", { method: "POST", body: fd });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error(err.detail || `HTTP ${resp.status}`);

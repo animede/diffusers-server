@@ -40,6 +40,7 @@
     <button class="tab-btn" data-tab="removebg">背景削除</button>
     <button class="tab-btn" data-tab="charsheet">キャラシート</button>
     <button class="tab-btn" data-tab="scene-angles">シーンアングル</button>
+    <button class="tab-btn" data-tab="tpose">Tポーズ4ビュー</button>
     <button class="tab-btn" data-tab="ltx2">動画(LTX-2.3)</button>
     <button class="tab-btn" data-tab="mageflow">Mage-Flow</button>
   </nav>
@@ -613,6 +614,132 @@
         <div id="sa-views-panel">
           <h3>アングル別ビュー</h3>
           <div id="sa-views-grid" class="views-grid"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel tab-panel" id="tab-tpose">
+    <h2>Tポーズ4ビュー: 1枚の画像から3D化用のTポーズ立ち絵を生成</h2>
+    <p class="panel-note">
+      両腕を水平に広げたTポーズ(手のひらを正面へ)の正面・背面・左前45度・右前45度を生成します。
+      image-3d のマルチビュー入力(Hunyuan3D-2mv)と rig-service の自動リグ/VRM化(Tポーズ前提)向け。
+      正面を最初に生成し、他のビューはその正面画像を参照して連鎖生成します(前後の造形を揃えるため)。
+      <strong>image-3d へ渡すのは正面・背面の2枚</strong>にしてください(45度ビューは参考出力で、
+      2mv の left/right スロットへ入れるとカメラ事前分布を誤らせます。Tポーズの真横90度ビューは
+      手前の腕がカメラを向いて破綻するため提供しません)。
+      入力は全身でも胸像でも可(写っていない部分はモデルが創作します)。
+    </p>
+
+    <div class="gen-layout">
+      <div class="gen-col-left">
+        <form id="tp-form" class="gen-form">
+          <label>入力キャラクター画像
+            <input type="file" id="tp-file-input" name="image" accept="image/*" required>
+          </label>
+          <fieldset id="tp-view-fieldset" style="border:1px solid #444; border-radius:6px; padding:8px 12px;">
+            <legend>生成するビュー(チェックしたものだけ生成)</legend>
+            <div id="tp-view-checkboxes" class="form-grid"></div>
+          </fieldset>
+          <div class="form-grid">
+            <label>被写体タイプ
+              <select id="tp-subject-input">
+                <option value="auto" selected>自動(中立・参照画像に任せる)</option>
+                <option value="animal">動物・ぬいぐるみ(毛皮/肉球)</option>
+                <option value="human">人物・リアルな人形(髪/手)</option>
+              </select>
+            </label>
+            <label>手のひら
+              <select id="tp-palms-input">
+                <option value="forward" selected>正面へ向ける(リグ用の標準)</option>
+                <option value="natural">指示しない</option>
+              </select>
+            </label>
+            <label>肉球(手のひらの模様)
+              <input type="text" id="tp-pawpads-input" value="auto"
+                     placeholder="auto / none / pink など">
+            </label>
+          </div>
+          <p class="form-hint">
+            被写体タイプ: <strong>リアルな人形で「背面が動物になる」「手に肉球が付く」場合は
+            「人物・リアルな人形」を選んでください</strong>(自動は毛皮/肉球の語を一切使わない
+            中立プロンプトになります)。ぬいぐるみで毛皮・肉球をはっきり出したいときは
+            「動物・ぬいぐるみ」を選びます。<br>
+            肉球: <code>auto</code>=入力画像の色を踏襲 / <code>none</code>=言及しない /
+            色名(例 pink)を書くとその色の肉球を描きます(色を書くと自動判定は動物になります)。
+          </p>
+          <div class="form-grid">
+            <label>しっぽ(プリセット)
+              <select id="tp-tail-preset"></select>
+            </label>
+            <label>しっぽ(自由記述で上書き)
+              <input type="text" id="tp-tail-input" placeholder="a long fluffy tail with a black tip">
+            </label>
+          </div>
+          <p class="form-hint">
+            しっぽ形状は正面画像からは推定できません。<strong>未指定だとビューごとに別の形状が
+            創作されます</strong>(実測で ポンポン/なし/長い尻尾 にばらけました)。入力画像に
+            しっぽが写っていない場合は必ず指定してください。参照画像で指定することもできますが、
+            顔や毛色まで参照画像側へ引きずられるため非推奨です。
+          </p>
+          <div class="form-grid">
+            <label>体型(プリセット)
+              <select id="tp-body-preset"></select>
+            </label>
+            <label>体型(自由記述で上書き)
+              <input type="text" id="tp-body-input"
+                     placeholder="例: short stubby legs and a large head">
+            </label>
+          </div>
+          <p class="form-hint">
+            <strong>脚が長くなる場合はここを指定してください。</strong>ポーズを変える際に
+            モデルが体型を人型寄りにドリフトさせることがあり(肩ライン比の実測で
+            0.45→0.37まで伸びた)、体型を言語化するのが唯一効いた対処です
+            (ぬいぐるみ・デフォルメ体型では指定推奨)。
+          </p>
+          <details>
+            <summary>しっぽ参照画像(非推奨・実験用)</summary>
+            <label>しっぽ形状の参照画像
+              <input type="file" id="tp-tailref-input" accept="image/*">
+            </label>
+          </details>
+          <label>追記プロンプト(任意)
+            <input type="text" id="tp-extra-input" placeholder="例: barefoot, no hat">
+          </label>
+          <div class="form-grid">
+            <label>seed(0=ランダム) <input type="number" id="tp-seed-input" value="0" step="1"></label>
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" id="tp-removebg-input">
+            背景を削除した透過PNG(<code>_nobg.png</code>)も生成する
+          </label>
+          <p class="form-hint">
+            rembg(isnet-general-use)で切り抜きます。白背景版はそのまま残るので、
+            切り抜きが不自然なときは白背景版を使えます。生成完了後にCPUで処理するため
+            GPUの待ちは発生しません(1枚1秒前後)。image-3d は自前で背景除去するため
+            必須ではありません。
+          </p>
+          <button type="submit" class="primary-btn" id="tp-generate-btn">Tポーズ生成</button>
+          <p id="tp-error-message" class="form-error hidden"></p>
+          <p id="tp-status-message" class="status-message hidden"></p>
+          <div id="tp-progress" class="progress-bar-wrap hidden">
+            <div class="progress-bar-label">
+              <span class="progress-bar-phase">生成中</span>
+              <span class="progress-bar-count" id="tp-progress-count"></span>
+            </div>
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" id="tp-progress-fill"></div>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="gen-col-right">
+        <div id="tp-views-panel">
+          <h3>ビュー別出力(各画像を個別ダウンロードできます)</h3>
+          <p id="tp-zip-row" class="form-hint hidden">
+            <a id="tp-zip-link" href="#" download>4枚まとめてZIPでダウンロード</a>
+          </p>
+          <div id="tp-views-grid" class="views-grid"></div>
         </div>
       </div>
     </div>

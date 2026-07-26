@@ -1547,6 +1547,143 @@ aerial / low_angle / 45度系は高品質で成立するが、**90度回転系�
 
 ---
 
+## tpose(Tポーズ4ビュー)
+
+1枚のキャラクター画像から **Tポーズ(両腕を水平に広げた姿勢)の4ビュー**
+(正面 / 背面 / 左前45度 / 右前45度)を生成するアプリケーション(2026-07-26追加)。
+`/api/tpose/` 配下。image-3d のマルチビュー入力(Hunyuan3D-2mv)と rig-service の
+自動リグ/VRM化(Tポーズ前提)向け。
+
+- パイプラインは **通常 Edit(`mode="edit"`、fp8-lightning、4steps・cfg1.0・既定1024²)**。
+  charsheet/scene_angles と違い **Multiple-angles LoRA は使わない**(Tポーズでは通常Editの
+  方が同一性・速度とも優位: 実測 5〜11秒/枚 vs 42〜46秒/枚、angles LoRAは背面で頭部が
+  黒髪へ変質した)。解像度は `DS_TPOSE_SIZE` で変更可。
+- **2段生成**: front を最初に生成し、他ビューは「生成した front + 元画像」を参照して
+  連鎖生成する(前後で帽子・しっぽ等の造形を揃えるため)。
+- ジョブ式(バックグラウンド実行、tposeジョブ同士は同時1件。他アプリとはGPUロックの
+  取得待ちで自然に直列化)。
+
+ビューID(4種): `front`, `back`, `front_left_45`, `front_right_45`
+
+### POST /api/tpose/generate
+
+Content-Type: `multipart/form-data`。
+
+| 名前 | 型 | 必須/任意 | 既定値 | 説明 |
+|---|---|---|---|---|
+| `image` | file | 必須 | - | 入力キャラクター画像(全身/胸像どちらでも可。内部で~1MP相当へスケール) |
+| `tail_ref` | file | 任意 | なし | しっぽ形状の参照画像。front以外で2枚目の参照に使う。**非推奨**(顔・毛色まで参照画像側へ引きずられる) |
+| `seed` | int | 任意 | `0` | 0=ビューごとにランダム |
+| `views` | string | 任意 | `""`(=4種全部) | カンマ区切りのビューID。未知IDは400。生成順は定義順に正規化(frontが先) |
+| `subject` | string | 任意 | `"auto"` | 被写体タイプ。`auto`=中立(毛皮/肉球/髪のどの語彙も使わない)/ `animal`=動物・ぬいぐるみ(fur/paws/paw pads)/ `human`=人物・リアルな人形(hair/hands/fingers)。他の値は400 |
+| `palms` | string | 任意 | `"forward"` | `forward`(手のひらをカメラへ=リグ用Tポーズの標準)/ `natural`(指示しない)。他の値は400 |
+| `paw_pads` | string | 任意 | `"auto"` | 肉球の色などの自由記述(例 `pink`)。`subject` が `animal` に解決されるときだけプロンプトへ入る。`none`=肉球に言及しない(`subject=auto` なら `human` 扱い)、色の明示指定は `subject=auto` でも `animal` 扱いになる |
+| `tail` | string | 任意 | `""` | しっぽ形状の自由記述(例 `a long fluffy tail with a black tip, hanging down`)。`none`=しっぽなし、空/`auto`=指定なし |
+| `body` | string | 任意 | `""` | 体型の自由記述(例 `short stubby legs and a large head`)。**脚が伸びる劣化への主要な対処**。1段目(元画像からポーズを変える段)のプロンプトにのみ入る |
+| `extra_prompt` | string | 任意 | `""` | プロンプト末尾への追記 |
+| `remove_bg` | bool | 任意 | `false` | 背景除去(rembg / isnet-general-use)。各ビューの背景透過版 `<key>_nobg.png`(RGBA)を併産する(白背景版はそのまま残る)。生成後・GPUロック解放後にCPUで処理するためGPU待ちなし(1枚1秒前後) |
+
+**レスポンス例**: `{ "job_id": "d3e3ee58a29c" }`
+
+**curlサンプル**
+
+```bash
+curl -X POST http://localhost:8601/api/tpose/generate \
+  -F "image=@character.png" -F "seed=42" -F "paw_pads=pink" \
+  -F "tail=a long fluffy tail with a black tip, hanging down"
+```
+
+### GET /api/tpose/jobs/{job_id}
+
+```json
+{
+  "job_id": "d3e3ee58a29c",
+  "status": "done",
+  "progress": 4,
+  "total": 4,
+  "seed": 42,
+  "params": {"palms": "forward", "paw_pads": "pink", "tail": "...",
+             "extra_prompt": "", "tail_ref": false, "size": 1024},
+  "views": [
+    {"key": "front", "label_ja": "正面", "label_en": "Front", "for_3d": true,
+     "status": "done",
+     "url": "/api/tpose/jobs/d3e3ee58a29c/images/front.png",
+     "download_url": "/api/tpose/jobs/d3e3ee58a29c/download/front.png",
+     "prompt": "The character stands upright facing directly toward the camera, ..."}
+  ],
+  "zip_url": "/api/tpose/jobs/d3e3ee58a29c/download.zip",
+  "error": null,
+  "created_at": "2026-07-26T22:31:00.000000",
+  "load_info": {"loaded": true, "method": "edit", "angles_lora": false}
+}
+```
+
+`for_3d`: Hunyuan3D-2mv のビュースロット(front/left/back/right)へそのまま渡してよいか。
+45度ビューは `false`(参考出力。left/rightスロットへ入れるとカメラ事前分布を誤らせる)。
+各ビューには `remove_bg=true` のとき `nobg_url` / `nobg_download_url` も入る。
+`status`: `queued` / `running` / `removing_bg` / `done` / `error`。ディスク復元は未実装
+(サーバ再起動後は状態参照不可、画像は `outputs/tpose/{job_id}/` に残る)。
+
+### GET /api/tpose/jobs/{job_id}/images/{key}.png
+
+各ビューの生成画像(`image/png`、inline表示用)。無ければ404。
+`{key}` に `_nobg` を付けると背景透過版(`remove_bg=true` 時のみ存在)。
+
+### GET /api/tpose/jobs/{job_id}/download/{key}.png
+
+各ビューの**個別ダウンロード**(`Content-Disposition: attachment;
+filename="tpose_{key}_{job_id}.png"`)。`{key}` に `_nobg` を付けると背景透過版。
+
+### GET /api/tpose/jobs/{job_id}/download.zip
+
+生成済み全ビュー(+ `remove_bg=true` なら `<key>_nobg.png` も)+ `input.png` の
+ZIP一括ダウンロード(`filename="tpose_{job_id}.zip"`)。ジョブ完了時に生成される。
+
+### GET /api/tpose/jobs/{job_id}/input.png
+
+前処理済み入力画像(`image/png`)。
+
+### GET /api/tpose/views
+
+利用可能なビューID・しっぽ/体型プリセット・palms/subjectモードの一覧(GPU不使用):
+`{"views": [{"key","label_ja","label_en","for_3d"}, ...], "tail_presets": [...],
+"body_presets": [...], "palms_modes": ["forward","natural"],
+"subject_modes": ["auto","animal","human"]}`
+
+**特記事項(実機検証で確定した制約)**
+
+- **真横(90度)ビューは提供しない**。Tポーズの真横投影は「手前の腕がカメラを向いて
+  完全に短縮し胴体を隠す」構図で、通常Edit / angles LoRA / LoRAトリガー文 / JoyAI /
+  2枚参照 / 幾何を明示した指示の6通りすべてで破綻した(手前腕が胸の上の肉塊になり、
+  両脚が1本の柱に融合)。**image-3d へ渡すのは front + back の2枚**にすること。
+- **しっぽ形状は入力画像から推定できない**。未指定だとビューごとに別形状が創作される
+  (実測でポンポン/なし/長い尻尾にばらけた)ため、入力画像にしっぽが写っていない場合は
+  `tail` で明示すること。しっぽの記述が短すぎると色・大きさがドリフトする
+  (`a long fluffy black-tipped tail` では全体が黒い巨大なしっぽになった)ため、
+  プリセット相当の具体的な記述(`a long fluffy tail with a black tip, hanging down`)を推奨。
+- **体型がドリフトする(脚が長くなる)**: ポーズ変更時にモデルが人型寄りの比率へ引っ張られる。
+  肩ライン比(肩の高さ/全高)の実測で 0.45 相当が 0.366 まで伸びた。汎用的な
+  「体型を維持せよ」文やキャンバス比の変更では改善せず、**`body` で体型を具体的に
+  言語化するのが唯一効いた対処**(0.401〜0.431へ回復)。詳細は
+  `apps/tpose/prompts.py` の「脚が伸びる問題」コメント参照。
+- 胸像入力からでも全身Tポーズを生成できるが、写っていない部分(脚部の衣装・靴等)は
+  モデルが創作する。
+- **背景透過版(`remove_bg=true`)の後処理**: rembgのアルファには内部の穴が空くことが
+  あり(実測でオーバーオールの帯の間が alpha≈160 になり暗い色が透けた)、
+  `scipy.ndimage.binary_fill_holes` で穴を埋め、RGBは白背景版から取り直している
+  (rembg出力のRGBは穴の周辺で濁るため)。ほぼ不透明な画素(alpha>=250)は255へ丸めるので
+  下流ツールの `alpha == 255` 判定が使える。実測: 残存穴0px、alpha 0=61.6% /
+  255=34.7% / 中間3.7%(輪郭の毛)。
+- **被写体タイプの指定を誤ると語彙が悪影響する**: `subject=animal` は fur/paws/paw pads を
+  プロンプトへ入れるため、リアルな人形・人物に使うと背面が動物化し手に肉球が付く。
+  既定 `auto` は中立語彙で両方に安全(実測: リアルな人形で背面が髪・手の甲になり肉球なし、
+  ぬいぐるみでも背面の毛並みを維持)。ただし `animal` を明示した方が背面の
+  「手の甲と爪・肉球は見えない」まで正しく描かれる。
+- 前後のシルエット一致度は良好(実測: 幅/高比 1.009 vs 1.007、腕ラインの相対高
+  0.435 vs 0.405、bbox高 970 vs 971 px)。
+
+---
+
 ## ユーティリティ
 
 ### POST /api/remove_bg
