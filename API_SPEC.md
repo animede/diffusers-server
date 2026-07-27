@@ -1577,10 +1577,13 @@ Content-Type: `multipart/form-data`。
 | `views` | string | 任意 | `""`(=4種全部) | カンマ区切りのビューID。未知IDは400。生成順は定義順に正規化(frontが先) |
 | `subject` | string | 任意 | `"auto"` | 被写体タイプ。`auto`=中立(毛皮/肉球/髪のどの語彙も使わない)/ `animal`=動物・ぬいぐるみ(fur/paws/paw pads)/ `human`=人物・リアルな人形(hair/hands/fingers)。他の値は400 |
 | `palms` | string | 任意 | `"forward"` | `forward`(手のひらをカメラへ=リグ用Tポーズの標準)/ `natural`(指示しない)。他の値は400 |
+| `fur_color` | string | 任意 | `""` | 毛色の色名(例 `cream white`)。空なら `claws="none"` かつ動物型のとき**入力画像から自動推定**する(rembgで被写体マスクを取り、彩度の低い画素の中央値を色名へ写す)。推定結果はジョブJSONの `fur_color_detected` に入る |
+| `claws` | string | 任意 | `"none"` | 爪。`none`=爪なし(ぬいぐるみでは自然)/ `auto`=参照画像に任せる / 自由記述(例 `short white claws`)。`subject` が `animal` に解決されるときのみ有効 |
 | `paw_pads` | string | 任意 | `"auto"` | 肉球の色などの自由記述(例 `pink`)。`subject` が `animal` に解決されるときだけプロンプトへ入る。`none`=肉球に言及しない(`subject=auto` なら `human` 扱い)、色の明示指定は `subject=auto` でも `animal` 扱いになる |
 | `tail` | string | 任意 | `""` | しっぽ形状の自由記述(例 `a long fluffy tail with a black tip, hanging down`)。`none`=しっぽなし、空/`auto`=指定なし |
 | `body` | string | 任意 | `""` | 体型の自由記述(例 `short stubby legs and a large head`)。**脚が伸びる劣化への主要な対処**。1段目(元画像からポーズを変える段)のプロンプトにのみ入る |
 | `extra_prompt` | string | 任意 | `""` | プロンプト末尾への追記 |
+| `recolor` | string | 任意 | `""` | 生成後に色を調整する**2パス目のEdit指示**(空なら実行しない)。例 `Make the fur a warmer cream tone with richer shading`。全ビューへ同じ指示を適用し、正面は調整後の画像を後続ビューの参照に使う(色をビュー間で揃えるため)。生成回数が2倍になる |
 | `remove_bg` | bool | 任意 | `false` | 背景除去(rembg / isnet-general-use)。各ビューの背景透過版 `<key>_nobg.png`(RGBA)を併産する(白背景版はそのまま残る)。生成後・GPUロック解放後にCPUで処理するためGPU待ちなし(1枚1秒前後) |
 
 **レスポンス例**: `{ "job_id": "d3e3ee58a29c" }`
@@ -1621,7 +1624,9 @@ curl -X POST http://localhost:8601/api/tpose/generate \
 `for_3d`: Hunyuan3D-2mv のビュースロット(front/left/back/right)へそのまま渡してよいか。
 45度ビューは `false`(参考出力。left/rightスロットへ入れるとカメラ事前分布を誤らせる)。
 各ビューには `remove_bg=true` のとき `nobg_url` / `nobg_download_url` も入る。
-`status`: `queued` / `running` / `removing_bg` / `done` / `error`。ディスク復元は未実装
+`has_prev` は追加Edit(下記 `/edit`)で退避された1世代前の画像があるか(undo可能か)。
+ビューの `status` は `queued` / `running` / `recoloring`(2パス目実行中) / `done` / `error`。
+ジョブの `status`: `queued` / `running` / `removing_bg` / `done` / `error`。ディスク復元は未実装
 (サーバ再起動後は状態参照不可、画像は `outputs/tpose/{job_id}/` に残る)。
 
 ### GET /api/tpose/jobs/{job_id}/images/{key}.png
@@ -1643,12 +1648,37 @@ ZIP一括ダウンロード(`filename="tpose_{job_id}.zip"`)。ジョブ完了�
 
 前処理済み入力画像(`image/png`)。
 
+### POST /api/tpose/jobs/{job_id}/edit
+
+生成済みビューへ**追加のEdit**をかける(何度でも呼べる汎用編集。色調整に限らず
+「帽子を外す」等にも使える)。生成時の `recolor` と同じ2パス目の仕組みを独立させたもの。
+Content-Type: `multipart/form-data`。
+
+| 名前 | 型 | 必須/任意 | 既定値 | 説明 |
+|---|---|---|---|---|
+| `prompt` | string | 必須 | - | 修正指示。空・空白のみは400 |
+| `views` | string | 任意 | `""`(=完了済み全ビュー) | カンマ区切りのビューID。このジョブに無いIDは400 |
+| `seed` | int | 任意 | `0` | 0=ランダム |
+| `keep_pose` | bool | 任意 | `true` | trueなら「ポーズ・構図・デザイン・背景は変えない」を付ける |
+
+**レスポンス**: `{"job_id": "...", "views": ["front","back"], "status": "editing"}`。
+進行状況は `GET /jobs/{job_id}`(ジョブ `status="editing"`、各ビュー `status="editing"`)で
+ポーリングする。直前の画像は `<key>_prev.png` へ1世代退避され、**透過版を持つビューは
+Edit後に作り直す**。ZIPも再生成される。編集の失敗はジョブの `edit_error` に入る。
+別の生成/編集が実行中なら409。
+
+### POST /api/tpose/jobs/{job_id}/undo
+
+直前のEditを取り消す(`<key>_prev.png` から復元、1世代のみ)。Form: `views`
+(任意、省略=退避のある全ビュー)。復元対象が無ければ409。透過版とZIPも作り直す。
+**レスポンス**: `{"job_id": "...", "restored": ["back"]}`
+
 ### GET /api/tpose/views
 
 利用可能なビューID・しっぽ/体型プリセット・palms/subjectモードの一覧(GPU不使用):
 `{"views": [{"key","label_ja","label_en","for_3d"}, ...], "tail_presets": [...],
 "body_presets": [...], "palms_modes": ["forward","natural"],
-"subject_modes": ["auto","animal","human"]}`
+"subject_modes": ["auto","animal","human"], "claws_modes": ["none","auto"]}`
 
 **特記事項(実機検証で確定した制約)**
 
@@ -1668,12 +1698,37 @@ ZIP一括ダウンロード(`filename="tpose_{job_id}.zip"`)。ジョブ完了�
   `apps/tpose/prompts.py` の「脚が伸びる問題」コメント参照。
 - 胸像入力からでも全身Tポーズを生成できるが、写っていない部分(脚部の衣装・靴等)は
   モデルが創作する。
-- **背景透過版(`remove_bg=true`)の後処理**: rembgのアルファには内部の穴が空くことが
-  あり(実測でオーバーオールの帯の間が alpha≈160 になり暗い色が透けた)、
-  `scipy.ndimage.binary_fill_holes` で穴を埋め、RGBは白背景版から取り直している
-  (rembg出力のRGBは穴の周辺で濁るため)。ほぼ不透明な画素(alpha>=250)は255へ丸めるので
-  下流ツールの `alpha == 255` 判定が使える。実測: 残存穴0px、alpha 0=61.6% /
-  255=34.7% / 中間3.7%(輪郭の毛)。
+- **爪は既定で出さない(`claws="none"`)**: 背面プロンプトに `with their claws` と
+  書いていたため黒い爪が目立つ出力になっていた(削除済み)。加えて爪の抑制は
+  **肯定形でしか効かない**: `"...without claws"`(否定形)では爪が残り、
+  `"the paw tips are soft, round and smooth"`(肯定形)で消える(実測)。
+  爪を出したい場合は `claws=auto` または自由記述を指定する。
+- **生成画像は参照元より明るい(実測)**: 参照元(輝度中央値112 / 白に近い画素1.9%)に対し
+  生成は正面155/2.2%・背面184/10.1%。これが背景除去で淡い部位が消える一因。1パス目の
+  プロンプトで色調を保持させる案は**爪抑制文を末尾から押し出して爪が戻るため採用していない**
+  (`extra_prompt` も爪抑制文より前に挿入される)。切り抜き側では対処済みで、
+  **色そのものを変えたい場合は `recolor`(2パス目のEdit)を使う**: 実測で
+  「Make the fur a warmer cream tone with richer shading and slightly deeper contrast」
+  により4ビューとも 輝度中央値 88〜97(参照元99に接近)・白に近い画素 1.7〜2.0%
+  (最大10%から改善)・切り抜き取りこぼし 368〜2,166px になった。ただし
+  **強い指示は同一性も動かす**(毛色が黄褐色へ寄り、耳の斑や爪の描写も変化した)ため
+  文言の強さはユーザー側で調整すること。所要時間は4ビュー+背景削除で157秒(2パスなし64秒)。
+- **爪を消すと後足の指の分離まで失われる問題への対処**: 上記の抑制文だけだと足が
+  ミトン状になる(足領域の内部勾配 1151px→965px)。「同じ毛色で」のような**相対表現では
+  効かず**、`each toe is <色名> fur right to the tip` のように**具体的な色名**を書くと
+  「指は分離・爪は無い」を両立できた(実測: 爪 889px / 指 1401px)。色名は `fur_color`
+  未指定時に入力画像から自動推定する。背面ビューは踵側が見えるため指が写らないのが正常。
+- **背景透過版(`remove_bg=true`)の後処理**: rembgのアルファをそのまま使うと
+  (a) 内部に穴が空く(帯の間が alpha≈160 になり暗い色が透ける)、(b) RGBが濁る、
+  (c) **淡い色の部位が消える**(背面ビューで白い毛の手が実測40,072px=被写体の約10%
+  落ちた)という3つの問題が出た。背景が**生成された白一色**であることを利用して
+  アルファを組み立て直している: 画像の境界から連結した白だけを背景とし(被写体に
+  囲まれた白飛び画素は背景にしない)、rembgが落とした明るい画素(輝度>=245)を
+  「淡い毛」として回収(影は輝度が低いので巻き込まない。実測 影≈148 / 淡い毛≈253)、
+  rembgの二値化閾値も 128→64 に下げる(淡い部位でrembgは薄いゴーストしか返さないため)。
+  最終マスクは最大連結成分+穴埋めで確定し、約1pxのぼかしで縁を整える
+  (**rembgの半透明マットは使わない**)。実測: 背面の取りこぼし 17,338px → 774px(-96%)、
+  代償は輪郭の純白の縁 約2,353px(約1px幅)。細い毛の房(しっぽ)は従来同様に保持される。
 - **被写体タイプの指定を誤ると語彙が悪影響する**: `subject=animal` は fur/paws/paw pads を
   プロンプトへ入れるため、リアルな人形・人物に使うと背面が動物化し手に肉球が付く。
   既定 `auto` は中立語彙で両方に安全(実測: リアルな人形で背面が髪・手の甲になり肉球なし、

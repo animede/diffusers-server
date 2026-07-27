@@ -75,6 +75,75 @@ def generate_view(
     return family.generate(req)
 
 
+def _name_color(rgb) -> str:
+    """RGB(0-255)を粗い色名へ写す(プロンプトへ埋め込むための語彙)。"""
+    import colorsys
+
+    r, g, b = [float(v) / 255.0 for v in rgb]
+    hue, sat, val = colorsys.rgb_to_hsv(r, g, b)
+    hue *= 360.0
+    if sat < 0.12:
+        if val > 0.85:
+            return "white"
+        if val > 0.6:
+            return "light grey"
+        if val > 0.3:
+            return "grey"
+        return "black"
+    if val > 0.78 and sat < 0.35 and 20.0 <= hue <= 65.0:
+        return "cream white"
+    if hue < 20.0 or hue >= 330.0:
+        return "pink" if (val > 0.7 and sat < 0.5) else "reddish brown"
+    if hue < 45.0:
+        return "light brown" if val > 0.6 else "brown"
+    if hue < 70.0:
+        return "cream yellow" if val > 0.8 else "yellow"
+    if hue < 170.0:
+        return "green"
+    if hue < 260.0:
+        return "blue"
+    return "purple"
+
+
+def sample_fur_color(image: Image.Image) -> str:
+    """入力画像から被写体の毛色を推定して色名を返す(失敗時は "")。
+
+    「爪を消すと後足の指も消える」問題への対処に使う(apps/tpose/prompts.py の
+    `_claws_none_with_color()` 参照。実測で「同じ毛色で」のような相対表現では効かず、
+    **具体的な色名**が必要だった)。
+
+    手順: rembg(背景除去に既に使っているCPU/ONNXモデル)で被写体マスクを取り、
+    彩度の低い画素(=毛。衣装は彩度が高いことが多い)の中央値を色名へ写す。
+    彩度の低い画素が被写体の15%未満しか無い場合(全身が濃色の衣装で覆われている等)は
+    被写体全体の中央値を使う。rembg が使えない環境では "" を返し、呼び出し側は
+    色名なしのフォールバック文言を使う。
+    """
+    try:
+        import colorsys
+
+        import numpy as np
+
+        from apps.charsheet.bg import remove_background
+
+        rgba = np.array(remove_background(image.convert("RGB")).convert("RGBA"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[apps.tpose] warning: 毛色の推定に失敗しました({exc})。色名なしで続行します。")
+        return ""
+
+    alpha = rgba[..., 3]
+    rgb = rgba[..., :3].astype(float)
+    subject = alpha > 200
+    if subject.sum() < 500:
+        return ""
+    px = rgb[subject] / 255.0
+    hsv = np.array([colorsys.rgb_to_hsv(*p) for p in px[:: max(1, len(px) // 20000)]])
+    low_sat = hsv[:, 1] < 0.30
+    sel = hsv[low_sat] if low_sat.mean() >= 0.15 else hsv
+    h, s, v = np.median(sel, axis=0)
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return _name_color((r * 255, g * 255, b * 255))
+
+
 def acquire_generation_lock(blocking: bool = True) -> bool:
     return gpu.generation_lock.acquire(blocking=blocking)
 

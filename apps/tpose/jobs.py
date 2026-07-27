@@ -35,13 +35,17 @@ from PIL import Image, ImageOps
 from apps.tpose import generate as generate_mod
 from apps.tpose.prompts import (
     BODY_PRESETS,
+    CLAWS_MODES,
     NEGATIVE_PROMPT,
     PALMS_MODES,
     SUBJECT_MODES,
     TAIL_PRESETS,
     VIEW_BY_KEY,
     VIEWS,
+    build_edit_prompt,
     build_prompt,
+    build_recolor_prompt,
+    resolve_subject,
 )
 from core import gpu
 from core import progress as progress_mod
@@ -103,6 +107,7 @@ def _init_job(job_id: str, seed: int, views: list, params: dict):
             "download_url": None,
             "nobg_url": None,
             "nobg_download_url": None,
+            "has_prev": False,
             "prompt": None,
         }
         for v in views
@@ -168,33 +173,81 @@ def _build_zip(job_dir: str, keys: list) -> Optional[str]:
     return zip_path
 
 
-def _cutout_rgba(src_rgb: Image.Image, rembg_rgba: Image.Image) -> Image.Image:
-    """rembg の出力から背景透過画像(RGBA)を組み立てる。
+# 背景が「生成された白一色」であることを利用した切り抜きの閾値。
+_CUTOUT_BRIGHT_T = 250   # これ以上明るい画素を「白」とみなす(背景候補)
+# rembg のアルファを二値化する閾値。既定の 128 では**淡い色の部位で rembg が
+# 「薄いゴースト」(alpha 1〜128)しか返さず手が消える**(ユーザー報告)。
+# 実測(背面ビュー、閾値ごとの「淡い毛の取りこぼし / 背景の巻き込み」):
+#   128 -> 9031px / 625px   64 -> **474px / 2353px**   32 -> 220px / 8131px
+#     8 ->   67px / 40161px
+# 64 が最良点(取りこぼしを95%削減、巻き込みは輪郭の約1pxの縁に留まる。純白の縁なので
+# 透過画像として実害が小さい)。
+_CUTOUT_REMBG_T = 64
+_CUTOUT_RECOVER_T = 245  # rembg が落とした画素のうち、これ以上明るければ「淡い毛」として回収
+_CUTOUT_FEATHER = 0.8    # 確定マスクの縁をぼかす量(px 相当。1px程度の自然な縁にする)
 
-    実機で出た2つの不具合への対処(momo.png のTポーズ正面で確認):
-      - **アルファに内部の穴が空く**: オーバーオールの帯の間が半透明(alpha≈160)になり、
-        暗い色が透けて見えた。`scipy.ndimage.binary_fill_holes` で「境界から到達できない
-        透明領域」を不透明に埋める(scipy は comfy-env に既存。import できない環境では
-        穴埋めをスキップして従来どおりの出力にフォールバックする)。
-      - **RGBが濁る**: rembg 出力のRGBは穴の周辺で暗く濁っていたため、RGBは
-        **元の白背景画像から取り直す**(アルファだけ rembg から使う)。
-    さらに、ほぼ不透明な画素(alpha>=250、isnet の出力は被写体でも 254 になる)は 255 へ
-    丸める(下流ツールの `alpha == 255` 判定が効くようにするため)。
+
+def _cutout_rgba(src_rgb: Image.Image, rembg_rgba: Image.Image) -> Image.Image:
+    """白背景の生成画像から背景透過画像(RGBA)を組み立てる。
+
+    実機で出た3つの不具合への対処:
+      1. **アルファに内部の穴が空く**(オーバーオールの帯の間が半透明 alpha≈160 になり
+         暗い色が透けた)-> `binary_fill_holes` で埋める。
+      2. **RGBが濁る**(rembg 出力のRGBは穴の周辺で暗くなる)-> RGBは**白背景版から
+         取り直し**、アルファだけを組み立てる。
+      3. **淡い色の部位(白い毛の手)が消える**(ユーザー報告。背面ビューで実測
+         40,072px = 被写体の約10%が落ちていた)-> 下記の「白の塗り分け」+
+         `_CUTOUT_REMBG_T`(二値化閾値を 128 -> 64 へ下げる)で回収する。
+
+    3. の方針: 背景は**生成された白一色**なので、ニューラル・マット(rembg)の
+    ソフトアルファに頼る必要がない。
+      - 画像の**境界から連結した明るい領域**(`lum >= _CUTOUT_BRIGHT_T`)だけを背景とする
+        (被写体に囲まれた明るい画素 = 白飛びした毛は背景にならない)。
+      - rembg が落とした画素のうち **明るいもの(`lum >= _CUTOUT_RECOVER_T`)だけ**を
+        被写体として回収する。影は輝度が低い(実測: 影 ≈148 / 淡い毛 ≈253)ので
+        この閾値で分離でき、接地影を巻き込まない。
+      - 最終マスクは最大連結成分 + 穴埋めで確定させ、`_CUTOUT_FEATHER` でぼかして
+        1px程度の自然な縁にする。**rembgの半透明マットは使わない**(淡い毛の内部が
+        半透明のまま残るのが症状の本質だったため)。毛の房のような細部は
+        「背景より暗い」ため上記の塗り分けで残ることを実機で確認済み(しっぽで比較)。
+    scipy が import できない環境では従来どおり rembg のアルファをそのまま使う。
     """
     import numpy as np
 
-    alpha = np.array(rembg_rgba.getchannel("A"))
+    alpha = np.array(rembg_rgba.getchannel("A")).astype(int)
     try:
         from scipy import ndimage
-
-        solid = alpha > 128
-        filled = ndimage.binary_fill_holes(solid)
-        alpha = np.where(filled & ~solid, 255, alpha)
     except ImportError:  # pragma: no cover - scipy が無い環境向けのフォールバック
-        print("[apps.tpose] warning: scipy が無いためアルファの穴埋めをスキップします")
-    alpha = np.where(alpha >= 250, 255, alpha).astype(np.uint8)
+        print("[apps.tpose] warning: scipy が無いため背景除去の後処理をスキップします")
+        out = src_rgb.convert("RGBA")
+        out.putalpha(Image.fromarray(np.where(alpha >= 250, 255, alpha).astype(np.uint8), "L"))
+        return out
+
+    lum = np.asarray(src_rgb.convert("RGB"), dtype=float).sum(2) / 3.0
+    # 境界から連結した「白」= 背景
+    labels, count = ndimage.label(lum >= _CUTOUT_BRIGHT_T)
+    if count:
+        border_ids = set(np.unique(np.concatenate(
+            [labels[0], labels[-1], labels[:, 0], labels[:, -1]]))) - {0}
+        background = np.isin(labels, list(border_ids))
+    else:
+        background = np.zeros_like(lum, dtype=bool)
+
+    rembg_subject = alpha > _CUTOUT_REMBG_T
+    recovered = (~background) & (~rembg_subject) & (lum >= _CUTOUT_RECOVER_T)
+    mask = rembg_subject | recovered
+
+    # 最大連結成分だけを残す(切り抜き残りの小さなゴミを落とす)
+    comp, n = ndimage.label(mask)
+    if n > 1:
+        sizes = ndimage.sum(np.ones_like(comp), comp, range(1, n + 1))
+        mask = comp == (int(np.argmax(sizes)) + 1)
+    mask = ndimage.binary_fill_holes(mask)
+
+    out_alpha = ndimage.gaussian_filter(mask.astype(np.float32) * 255.0, _CUTOUT_FEATHER)
+    out_alpha = np.where(out_alpha >= 250, 255, out_alpha).astype(np.uint8)
     out = src_rgb.convert("RGBA")
-    out.putalpha(Image.fromarray(alpha, mode="L"))
+    out.putalpha(Image.fromarray(out_alpha, mode="L"))
     return out
 
 
@@ -240,6 +293,16 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
         processed = generate_mod.preprocess_image(input_image)
         processed.save(os.path.join(job_dir, "input.png"))
 
+        # 毛色の自動推定(rembg はCPU処理なのでGPUロック取得前に行う)。
+        # 爪抑制文("each toe is <毛色> fur right to the tip")で使う。
+        fur_color = (params.get("fur_color") or "").strip()
+        if (not fur_color
+                and (params.get("claws") or "none").strip().lower() == "none"
+                and resolve_subject(params.get("subject", "auto"),
+                                    params.get("paw_pads", "auto")) == "animal"):
+            fur_color = generate_mod.sample_fur_color(processed)
+            _update_job(job_id, fur_color_detected=fur_color)
+
         tail_ref = None
         if tail_ref_path:
             tail_ref = generate_mod.preprocess_image(
@@ -262,6 +325,8 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
                 subject=params.get("subject", "auto"),
                 palms=params["palms"],
                 paw_pads=params["paw_pads"],
+                claws=params.get("claws", "none"),
+                fur_color=fur_color,
                 tail=params["tail"],
                 body=params["body"],
                 extra=params["extra_prompt"],
@@ -300,6 +365,30 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
                 )
                 out_path = os.path.join(job_dir, f"{key}.png")
                 _copy_generated_image(meta, out_path)
+
+                # 色調整の2パス目(任意)。1パス目のプロンプト末尾を汚さずに色を
+                # 変えられる(apps/tpose/prompts.py の recolor コメント参照)。
+                # 正面は**調整後**の画像を後続ビューの参照に使う(色をビュー間で揃える)。
+                recolor = (params.get("recolor") or "").strip()
+                if recolor:
+                    _update_view(job_id, key, status="recoloring")
+                    with Image.open(out_path) as generated:
+                        recolor_meta = generate_mod.generate_view(
+                            [generated.convert("RGB")],
+                            prompt=build_recolor_prompt(recolor),
+                            seed=seed,
+                            negative_prompt=NEGATIVE_PROMPT,
+                            progress_extra={
+                                "job_id": job_id,
+                                "direction": f"{key}_recolor",
+                                "direction_label": view.get("label_ja"),
+                                "direction_index": idx + 1,
+                                "direction_total": total,
+                                "app": "tpose",
+                            },
+                        )
+                    _copy_generated_image(recolor_meta, out_path)
+
                 if key == "front":
                     front_image = Image.open(out_path).convert("RGB")
             except Exception as exc:  # noqa: BLE001
@@ -356,9 +445,12 @@ async def generate(
     subject: str = Form("auto"),
     palms: str = Form("forward"),
     paw_pads: str = Form("auto"),
+    claws: str = Form("none"),
+    fur_color: str = Form(""),
     tail: str = Form(""),
     body: str = Form(""),
     extra_prompt: str = Form(""),
+    recolor: str = Form(""),
     remove_bg: bool = Form(False),
 ):
     """Tポーズ4ビュー生成ジョブを開始する。
@@ -382,10 +474,20 @@ async def generate(
     - body: 体型の自由記述(例 "short stubby legs and a large head")。**脚が伸びる
       劣化への主要な対処**(apps/tpose/prompts.py の「脚が伸びる問題」参照)。
       ぬいぐるみ・デフォルメ体型では指定を推奨。空なら何も足さない
+    - claws: 爪。"none"(既定、爪なし=ぬいぐるみでは自然)/ "auto"(参照画像に任せる)/
+      自由記述(例 "short white claws")。`subject` が animal に解決されるときのみ有効
+    - fur_color: 毛色の色名(任意、例 "cream white")。空なら `claws="none"` かつ動物型の
+      ときに入力画像から自動推定する(爪を消しても後足の指の分離が保たれるようにするため。
+      apps/tpose/prompts.py の「爪」コメント参照)
     - tail: しっぽ形状の自由記述(例 "a long fluffy tail with a black tip")。
       "none" でしっぽなし、空/"auto" で指定なし(未指定だとビューごとに形状が
       揺れるため、入力画像にしっぽが写っていない場合は指定推奨)
     - extra_prompt: プロンプト末尾へ追記する自由記述(任意)
+    - recolor: 生成後に色を調整する2パス目の指示(任意、空なら実行しない)。例
+      "Make the fur a warmer cream tone with richer shading"。全ビューへ同じ指示を
+      適用し、正面は調整後の画像を後続ビューの参照に使う(色をビュー間で揃えるため)。
+      1ビューあたり生成が2回になる(所要時間はおよそ2倍)。**強い指示は同一性も動かす**
+      (実測で毛色が黄褐色へ寄り爪が戻った例あり、apps/tpose/prompts.py参照)
     - remove_bg: 背景除去(rembg / isnet-general-use)。true なら各ビューの背景透過版
       `<key>_nobg.png`(RGBA)を併せて生成する(白背景版はそのまま残す)。
       生成完了後・GPUロック解放後にCPUで処理するため、GPU待ちは発生しない
@@ -441,9 +543,12 @@ async def generate(
 
     params = {
         "remove_bg": bool(remove_bg),
+        "recolor": recolor,
         "subject": subject,
         "palms": palms,
         "paw_pads": paw_pads,
+        "claws": claws,
+        "fur_color": fur_color,
         "tail": tail,
         "body": body,
         "extra_prompt": extra_prompt,
@@ -533,6 +638,180 @@ async def get_input_image(job_id: str):
     return FileResponse(path, media_type="image/png")
 
 
+# ============================================================================
+# 生成済みビューへの追加編集(何度でも適用できる汎用 Edit)
+#
+# 生成時の `recolor` パラメータと同じ2パス目の仕組みを、**生成後に任意回数**
+# 呼べるエンドポイントとして切り出したもの(色調整に限らず「帽子を外す」等の
+# 汎用修正に使える)。charsheet の refine/undo と同じ流儀で、直前の画像を
+# `<key>_prev.png` に1世代だけ退避して undo できるようにする。
+# ============================================================================
+def _parse_view_keys(raw: str, job: dict, require_done: bool = True) -> list:
+    """views パラメータを「対象ビューのキー一覧」へ解決する(空なら完了済み全部)。"""
+    valid = {v["key"] for v in job["views"]}
+    if raw and raw.strip():
+        keys = [k.strip() for k in raw.split(",") if k.strip()]
+        unknown = set(keys) - valid
+        if unknown:
+            raise HTTPException(
+                status_code=400, detail=f"このジョブに無いビューIDです: {sorted(unknown)}")
+    else:
+        keys = [v["key"] for v in job["views"]]
+    if require_done:
+        done = {v["key"] for v in job["views"] if v["status"] in ("done", "edited")}
+        keys = [k for k in keys if k in done]
+    if not keys:
+        raise HTTPException(status_code=409, detail="対象になる生成済みビューがありません。")
+    return keys
+
+
+def _refresh_has_prev(job_id: str, job_dir: str) -> None:
+    with jobs_lock:
+        for v in jobs[job_id]["views"]:
+            v["has_prev"] = os.path.exists(os.path.join(job_dir, f"{v['key']}_prev.png"))
+
+
+def _run_edit(job_id: str, keys: list, instruction: str, seed: int, keep_pose: bool):
+    """選択ビューへ順に Edit をかけ、透過版・ZIPを作り直す。"""
+    global current_job_id
+    job_dir = _job_dir(job_id)
+    got_lock = False
+    prompt = build_edit_prompt(instruction, keep_pose=keep_pose)
+    try:
+        _update_job(job_id, status="editing", edit_error=None)
+        got_lock = generate_mod.acquire_generation_lock(blocking=True)
+        gpu.empty_cache()
+        generate_mod.ensure_edit_loaded()
+
+        for idx, key in enumerate(keys):
+            img_path = os.path.join(job_dir, f"{key}.png")
+            if not os.path.exists(img_path):
+                continue
+            _update_view(job_id, key, status="editing", edit_prompt=prompt)
+            shutil.copy2(img_path, os.path.join(job_dir, f"{key}_prev.png"))
+            try:
+                with Image.open(img_path) as current:
+                    meta = generate_mod.generate_view(
+                        [current.convert("RGB")],
+                        prompt=prompt,
+                        seed=seed,
+                        negative_prompt=NEGATIVE_PROMPT,
+                        progress_extra={
+                            "job_id": job_id,
+                            "direction": f"{key}_edit",
+                            "direction_index": idx + 1,
+                            "direction_total": len(keys),
+                            "app": "tpose",
+                        },
+                    )
+                _copy_generated_image(meta, img_path)
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                _update_view(job_id, key, status="done")
+                _update_job(job_id, status="done", edit_error=f"{key}: {exc}")
+                return
+            _update_view(job_id, key, status="done")
+
+        # 透過版を持っていたビューは作り直す(古い切り抜きが残らないように)
+        nobg_keys = [k for k in keys
+                     if os.path.exists(os.path.join(job_dir, f"{k}_nobg.png"))]
+        if nobg_keys:
+            if got_lock:
+                generate_mod.release_generation_lock()
+                got_lock = False
+            _update_job(job_id, status="removing_bg")
+            _remove_bg_pass(job_id, job_dir, nobg_keys)
+
+        _build_zip(job_dir, [v["key"] for v in jobs[job_id]["views"]])
+        _refresh_has_prev(job_id, job_dir)
+        _update_job(job_id, status="done")
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        _update_job(job_id, status="done", edit_error=str(exc))
+    finally:
+        progress_mod.finish()
+        if got_lock:
+            generate_mod.release_generation_lock()
+        with current_job_lock:
+            current_job_id = None
+
+
+@router.post("/jobs/{job_id}/edit")
+async def edit_views(
+    job_id: str,
+    prompt: str = Form(...),
+    views: str = Form(""),
+    seed: int = Form(0),
+    keep_pose: bool = Form(True),
+):
+    """生成済みビューへ追加の Edit をかける(何度でも呼べる)。
+
+    - prompt: 修正指示(例 "Make the fur a warmer cream tone with richer shading"、
+      "remove the hat")
+    - views: カンマ区切りのビューID(省略=完了済み全ビュー)
+    - seed: 乱数シード(0=ランダム)
+    - keep_pose: true(既定)なら「ポーズ・構図・デザイン・背景は変えない」を付ける
+    直前の画像は `<key>_prev.png` に1世代退避され、`POST /jobs/{job_id}/undo` で戻せる。
+    透過版を持つビューは Edit 後に作り直す。
+    """
+    global current_job_id
+    _check_job_id(job_id)
+    if not prompt or not prompt.strip():
+        raise HTTPException(status_code=400, detail="修正指示を入力してください。")
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+        job = dict(job)
+    keys = _parse_view_keys(views, job)
+
+    with current_job_lock:
+        if current_job_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="別のTポーズ生成/編集が実行中です。しばらく待ってから再試行してください。",
+            )
+        current_job_id = job_id
+
+    thread = threading.Thread(
+        target=_run_edit, args=(job_id, keys, prompt, seed, bool(keep_pose)), daemon=True
+    )
+    thread.start()
+    return {"job_id": job_id, "views": keys, "status": "editing"}
+
+
+@router.post("/jobs/{job_id}/undo")
+async def undo_views(job_id: str, views: str = Form("")):
+    """直前の Edit を取り消す(`<key>_prev.png` から復元。1世代のみ)。"""
+    _check_job_id(job_id)
+    job_dir = _job_dir(job_id)
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+        job = dict(job)
+    keys = _parse_view_keys(views, job, require_done=False)
+
+    restored = []
+    for key in keys:
+        prev = os.path.join(job_dir, f"{key}_prev.png")
+        if not os.path.exists(prev):
+            continue
+        shutil.copy2(prev, os.path.join(job_dir, f"{key}.png"))
+        os.remove(prev)
+        restored.append(key)
+    if not restored:
+        raise HTTPException(status_code=409, detail="取り消せる編集がありません。")
+
+    nobg_keys = [k for k in restored
+                 if os.path.exists(os.path.join(job_dir, f"{k}_nobg.png"))]
+    if nobg_keys:
+        _remove_bg_pass(job_id, job_dir, nobg_keys)
+    _build_zip(job_dir, [v["key"] for v in job["views"]])
+    _refresh_has_prev(job_id, job_dir)
+    return {"job_id": job_id, "restored": restored}
+
+
 @router.get("/views")
 async def list_views():
     """利用可能なビューID・しっぽプリセットの一覧(UI用)。GPU不使用。
@@ -555,4 +834,5 @@ async def list_views():
         "body_presets": BODY_PRESETS,
         "palms_modes": list(PALMS_MODES),
         "subject_modes": list(SUBJECT_MODES),
+        "claws_modes": list(CLAWS_MODES),
     }

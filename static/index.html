@@ -659,8 +659,18 @@
               <input type="text" id="tp-pawpads-input" value="auto"
                      placeholder="auto / none / pink など">
             </label>
+            <label>爪(動物・ぬいぐるみ時)
+              <select id="tp-claws-input">
+                <option value="none" selected>爪なし(既定・自然)</option>
+                <option value="auto">参照画像に任せる</option>
+                <option value="short claws">短い爪あり</option>
+              </select>
+            </label>
           </div>
           <p class="form-hint">
+            爪: 既定の「爪なし」では、後足の指の分離が保たれるように入力画像から毛色を
+            自動推定して色名をプロンプトへ入れます(相対表現では効かず具体的な色名が必要、という
+            実測に基づく)。<br>
             被写体タイプ: <strong>リアルな人形で「背面が動物になる」「手に肉球が付く」場合は
             「人物・リアルな人形」を選んでください</strong>(自動は毛皮/肉球の語を一切使わない
             中立プロンプトになります)。ぬいぐるみで毛皮・肉球をはっきり出したいときは
@@ -740,6 +750,32 @@
             <a id="tp-zip-link" href="#" download>4枚まとめてZIPでダウンロード</a>
           </p>
           <div id="tp-views-grid" class="views-grid"></div>
+
+          <div id="tp-edit-box" class="hidden" style="margin-top:14px; border:1px solid #444; border-radius:6px; padding:10px 12px;">
+            <h4 style="margin:0 0 6px;">生成後の編集(何度でも適用できます)</h4>
+            <label>修正指示
+              <input type="text" id="tp-edit-input"
+                     placeholder="例: Make the fur a warmer cream tone with richer shading / remove the hat">
+            </label>
+            <div class="form-grid" style="margin-top:6px;">
+              <label>seed(0=ランダム) <input type="number" id="tp-edit-seed" value="0" step="1"></label>
+              <label class="checkbox-row" style="align-self:end;">
+                <input type="checkbox" id="tp-edit-keeppose" checked>
+                ポーズ・構図・背景を維持する
+              </label>
+            </div>
+            <div class="view-tile-actions" style="justify-content:flex-start; padding:8px 0 0;">
+              <button type="button" class="tiny-btn" id="tp-edit-all-btn">全ビューに適用</button>
+              <button type="button" class="tiny-btn secondary" id="tp-undo-btn">直前の編集を取り消す</button>
+            </div>
+            <p class="form-hint" style="margin-top:6px;">
+              色調整だけでなく汎用の修正に使えます(生成時の <code>recolor</code> と同じ2パス目の仕組み)。
+              各タイルの「このビューを編集」で1枚だけ適用も可能。1世代分だけ元に戻せます。
+              <strong>強い指示は毛色や造形も動かします</strong>(実測: 暖色化の指示で毛色が黄褐色へ寄り爪が復活)。
+              背景透過版があるビューは編集後に作り直します。
+            </p>
+            <p id="tp-edit-error" class="form-error hidden"></p>
+          </div>
         </div>
       </div>
     </div>

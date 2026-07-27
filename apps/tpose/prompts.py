@@ -152,9 +152,11 @@ _PALMS_FORWARD_NEUTRAL = (
 # 背面ビュー用: 手のひらは(正面へ向けたまま)カメラの反対を向くので、見えるのは手の甲。
 # ここを正面と同じ「肉球が見える」文言にすると、背面画像に肉球が描かれてしまい
 # 3D再構成用のビューとして矛盾する(実機で発生・修正済み)。
+# 「爪」は書かない: ここに "with their claws" と書いていたために背面で黒い爪が
+# 目立つ出力になっていた(ユーザー報告 -> 削除、2026-07-27)。
 _PALMS_BACK_ANIMAL = (
-    "the palms still face away from the camera so we see the backs of both paws "
-    "with their claws, the paw pads are not visible from behind"
+    "the palms still face away from the camera so we see the backs of both paws, "
+    "the paw pads are not visible from behind"
 )
 _PALMS_BACK_HUMAN = (
     "the palms still face away from the camera so we see the backs of both hands"
@@ -229,6 +231,70 @@ def _palms_clause(view_key: str, palms: str, paw_pads: str, subject_kind: str) -
     )
 
 
+# 爪(claws)。subject が animal に解決されるときだけ使う。
+#
+# 実測(momo.png、2026-07-27):
+#   ✕ "the paws have soft rounded tips without claws"(否定形)-> **爪が残る**
+#     (前足の縁と足先に黒い爪が描かれたまま。CLAUDE.md 57番の「否定文は逆効果」と同じ)
+#   ○ "the paw tips are soft, round and smooth"(肯定形のみ)-> 前足(手)の爪は消える
+#     (体型への悪影響もなし: arm_rel 0.401 -> 0.406)
+#   ただし上記だけでは **後足(足先)に茶色の爪がわずかに残る**(ユーザー報告。
+#   足先の暗色ピクセル実測 1805px)。対処の追試:
+#   ✕ "all four paws end in soft, round, smooth fur in the same color as the
+#     surrounding fur"(まとめて言う)-> 悪化(足先 3173px、手にも 151px)
+#   ○ **後足を名指しして重ねる**(採用): "..., the toes of the hind feet are also
+#     soft, round and smooth in the same fur color" -> 足先 764px(-58%)、
+#     目視でも茶色の爪が消える。手の 52px は輪郭のアンチエイリアス由来で爪は無い。
+#   教訓: 部位を名指ししないとモデルは手だけに適用する(「all four paws」のような
+#   総称よりも "hind feet" と具体的に書く方が効く)。
+#   **さらに追試(「足の指も消えた」の報告 -> 2026-07-27)**: 上の文だけだと後足の指の
+#   分離までのっぺりして「指が無い」見た目になる(指の内部勾配 1151px -> 965px)。
+#   「指」と「爪なし」の両立を測る指標を追加した(足領域の 暗色px=爪 と 内部勾配px=指)。
+#   実測(momo.png、目標: 爪<1200 かつ 指>1400):
+#     ✕ "the hind feet keep their separate rounded toes in the same fur color as the body"
+#       -> 指は戻る(2018px)が **爪も戻る**(3681px)
+#     ✕ 上に "every toe tip is soft, round and smooth" を足す -> 爪 3700px(戻らない)
+#     ✕ "...in cream white fur with no dark tips"(否定形)-> 爪 676px だが指 1024px
+#     ○ **色を具体的に明示**(採用): "the hind feet have separate rounded toes and each toe
+#       is <毛色> fur right to the tip" -> 爪 889px / 指 1401px。目視でも指が4本に分かれ、
+#       黒い爪が消える
+#   教訓: 「同じ毛色で」のような相対表現では効かず、**具体的な色名**が必要。色名は
+#   入力画像から自動サンプリングする(sample_fur_color()、apps/tpose/generate.py)。
+CLAWS_MODES = ("none", "auto")
+# 毛色が分からない場合のフォールバック(爪は消えるが後足の指の分離も弱くなる)
+_CLAWS_NONE = (
+    "the paw tips are soft, round and smooth, the toes of the hind feet are also "
+    "soft, round and smooth in the same fur color"
+)
+
+
+def _claws_none_with_color(fur_color: str) -> str:
+    """毛色が分かるときの爪抑制文(実測で最良、上のコメント参照)。"""
+    return (
+        "the paw tips are soft, round and smooth, the hind feet have separate "
+        f"rounded toes and each toe is {fur_color.strip()} fur right to the tip"
+    )
+
+
+def _claws_clause(claws: str, subject_kind: str, fur_color: str = "") -> str:
+    """爪の指示句。animal 以外(人物・中立)では何も足さない(爪の語自体を出さない)。
+
+    - "none"(既定): 爪を消す(ぬいぐるみでは爪が無い方が自然というユーザー判断)
+    - "auto"       : 何も書かない(参照画像に爪があればそのまま出る)
+    - それ以外     : 自由記述(例 "short white claws")をそのまま使う
+    """
+    if subject_kind != "animal":
+        return ""
+    value = (claws or "none").strip().lower()
+    if value == "auto":
+        return ""
+    if value == "none":
+        if fur_color and fur_color.strip():
+            return _claws_none_with_color(fur_color)
+        return _CLAWS_NONE
+    return f"the paws have {claws.strip()}"
+
+
 def _tail_clause(tail: str) -> str:
     """しっぽの指示句。
 
@@ -295,9 +361,25 @@ def _view_clause(view_key: str, subject_kind: str, first_stage: bool = False) ->
     return text
 
 
+# 「生成画像の色が参照元より薄い」というユーザー指摘への調査結果(2026-07-27、**未採用**)。
+#
+# 実測は指摘を裏付けた: 参照元 momo.png(被写体の輝度中央値112 / 白に近い画素1.9% /
+# 輪郭5px帯130)に対し、生成は 正面155/2.2%/178、**背面184/10.1%/201** と明るく、
+# とくに背面が白飛びする。これが背景除去で淡い部位が消える一因だった。
+#
+# 対策として「色調保持の一文」を末尾に足す案を試したが **採用しなかった**:
+#   - 背面単体では効果があった(白に近い画素 5.8% -> 1.6%、輪郭帯 196 -> 186)。
+#   - しかし **爪抑制文が末尾から外れると爪が戻る**(正面の爪 889px -> 3493px)。
+#     参照元に言及しない "natural soft studio lighting with gentle shading" でも
+#     爪 3509px・明るさも改善せず(中央値 149 -> 162 で悪化)。
+#   - つまり**末尾の句が最も強く効く**ため、爪抑制文の後ろには何も足せない。
+# 結論: 明るさは**プロンプトではなく切り抜き側で対処する**(`_cutout_rgba()` の
+# 白キーイング。背面の取りこぼしは 17,338px -> 774px まで解消済み)。
+# なお `extra_prompt` も同じ理由で**爪抑制文より前**に差し込む(下記 build_prompt)。
 def build_prompt(view_key: str, palms: str = "forward", paw_pads: str = "auto",
                  tail: str = "", body: str = "", extra: str = "",
-                 first_stage: bool = False, subject: str = "auto") -> str:
+                 first_stage: bool = False, subject: str = "auto",
+                 claws: str = "none", fur_color: str = "") -> str:
     """1ビュー分のプロンプトを組み立てる。
 
     句の順序は実測で決めてある(下の「脚が伸びる問題」のコメント参照):
@@ -329,6 +411,10 @@ def build_prompt(view_key: str, palms: str = "forward", paw_pads: str = "auto",
         parts.append(tail_clause)
     if extra and extra.strip():
         parts.append(extra.strip())
+    # 爪抑制文は**必ず末尾**に置く(末尾の句が最も強く効くため。上のコメント参照)
+    claws_clause = _claws_clause(claws, subject_kind, fur_color)
+    if claws_clause:
+        parts.append(claws_clause)
     return ", ".join(parts)
 
 
@@ -352,6 +438,43 @@ BODY_PRESETS = [
         "value": "normal human body proportions",
     },
 ]
+
+# 生成後の色調整(recolor、2026-07-27追加)。
+#
+# 経緯: 「生成画像の色が参照元より薄い」問題は1パス目のプロンプトでは解決できなかった
+# (上の「未採用」コメント: 末尾に句を足すと爪抑制が壊れる)。ユーザーが**2パス目の
+# Edit で色を任意に変えられる**ことを発見したため、オプションとして取り込んだ。
+# 2パス目は独立した Edit 呼び出しなので「末尾が最強」の制約と衝突しない。
+#
+# 実測(1パス目の正面を入力に、seed 42):
+#   - "Make the fur a warmer cream tone with richer shading and slightly deeper
+#     contrast" -> 輝度中央値 149 -> **95**(参照元99に接近)、輪郭帯 178 -> 142。
+#     ただし**毛色が黄褐色へ寄り、耳の黒斑も変化**し、爪も戻った(889px -> 2448px)。
+#   - "Increase the color saturation and contrast a little ..." -> ほぼ変化なし
+#     (中央値 148)。
+# つまり効果の強さは文言次第で、**強い指示は同一性も動かす**。既定は無効(空文字)にし、
+# 文言はユーザーに委ねる(プリセットは用意しない: 望ましい色は用途ごとに違うため)。
+_RECOLOR_KEEP = (
+    "keep the pose, composition, design and background exactly the same, "
+    "plain white background, full body visible from head to toe"
+)
+
+
+def build_edit_prompt(instruction: str, keep_pose: bool = True) -> str:
+    """生成済みビューへ追加でかける Edit のプロンプトを組み立てる。
+
+    色調整だけでなく汎用の修正指示に使える(「帽子を外す」「服を赤くする」等)。
+    keep_pose=True(既定)なら「ポーズ・構図・デザイン・背景は変えない」を付け、
+    Tポーズと白背景・画角を保つ。False なら指示文だけを渡す(構図ごと変えたい場合)。
+    """
+    instruction = instruction.strip()
+    return f"{instruction}, {_RECOLOR_KEEP}" if keep_pose else instruction
+
+
+def build_recolor_prompt(recolor: str) -> str:
+    """生成時 `recolor` パラメータ用(= build_edit_prompt の別名)。"""
+    return build_edit_prompt(recolor)
+
 
 # しっぽプリセット(UI用。値はそのまま tail パラメータへ渡せる自由記述)
 TAIL_PRESETS = [
