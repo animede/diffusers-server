@@ -2035,60 +2035,6 @@ document.getElementById("removebg-form").addEventListener("submit", async (ev) =
     pollJob(jobId);
   }
 
-  const showEditError = (msg) => {
-    editError.textContent = msg || "";
-    editError.classList.toggle("hidden", !msg);
-  };
-
-  async function applyEdit(keys) {
-    const instruction = (editInput.value || "").trim();
-    if (!instruction) { showEditError("修正指示を入力してください"); return; }
-    if (!currentJobId || busy) return;
-    showEditError("");
-    const fd = new FormData();
-    fd.append("prompt", instruction);
-    fd.append("seed", editSeed.value || "0");
-    fd.append("keep_pose", editKeepPose.checked ? "true" : "false");
-    if (keys && keys.length) fd.append("views", keys.join(","));
-    busy = true;
-    editAllBtn.disabled = true;
-    showStatus("編集中...");
-    try {
-      const resp = await fetch(`/api/tpose/jobs/${currentJobId}/edit`, { method: "POST", body: fd });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || `HTTP ${resp.status}`);
-      }
-      pollTimer = setInterval(() => pollJob(currentJobId), 1500);
-      pollJob(currentJobId);
-    } catch (err) {
-      busy = false;
-      editAllBtn.disabled = false;
-      showStatus("");
-      showEditError(err.message);
-    }
-  }
-
-  async function applyUndo(keys) {
-    if (!currentJobId || busy) return;
-    showEditError("");
-    const fd = new FormData();
-    if (keys && keys.length) fd.append("views", keys.join(","));
-    try {
-      const resp = await fetch(`/api/tpose/jobs/${currentJobId}/undo`, { method: "POST", body: fd });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || `HTTP ${resp.status}`);
-      }
-      pollJob(currentJobId);
-    } catch (err) {
-      showEditError(err.message);
-    }
-  }
-
-  if (editAllBtn) editAllBtn.addEventListener("click", () => applyEdit([]));
-  if (undoBtn) undoBtn.addEventListener("click", () => applyUndo([]));
-
   async function pollJob(jobId) {
     try {
       const resp = await fetch(`/api/charsheet/jobs/${jobId}`);
@@ -2533,8 +2479,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   function renderViews(views) {
     viewsGrid.innerHTML = "";
     const statusText = {
-      queued: "待機中", running: "生成中", recoloring: "色調整中",
-      editing: "編集中", done: "完了", error: "エラー",
+      queued: "待機中", running: "生成中", done: "完了", error: "エラー",
     };
     for (const v of views) {
       const tile = document.createElement("div");
@@ -2568,68 +2513,12 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     }
   }
 
-  const showEditError = (msg) => {
-    editError.textContent = msg || "";
-    editError.classList.toggle("hidden", !msg);
-  };
-
-  async function applyEdit(keys) {
-    const instruction = (editInput.value || "").trim();
-    if (!instruction) { showEditError("修正指示を入力してください"); return; }
-    if (!currentJobId || busy) return;
-    showEditError("");
-    const fd = new FormData();
-    fd.append("prompt", instruction);
-    fd.append("seed", editSeed.value || "0");
-    fd.append("keep_pose", editKeepPose.checked ? "true" : "false");
-    if (keys && keys.length) fd.append("views", keys.join(","));
-    busy = true;
-    editAllBtn.disabled = true;
-    showStatus("編集中...");
-    try {
-      const resp = await fetch(`/api/tpose/jobs/${currentJobId}/edit`, { method: "POST", body: fd });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || `HTTP ${resp.status}`);
-      }
-      pollTimer = setInterval(() => pollJob(currentJobId), 1500);
-      pollJob(currentJobId);
-    } catch (err) {
-      busy = false;
-      editAllBtn.disabled = false;
-      showStatus("");
-      showEditError(err.message);
-    }
-  }
-
-  async function applyUndo(keys) {
-    if (!currentJobId || busy) return;
-    showEditError("");
-    const fd = new FormData();
-    if (keys && keys.length) fd.append("views", keys.join(","));
-    try {
-      const resp = await fetch(`/api/tpose/jobs/${currentJobId}/undo`, { method: "POST", body: fd });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.detail || `HTTP ${resp.status}`);
-      }
-      pollJob(currentJobId);
-    } catch (err) {
-      showEditError(err.message);
-    }
-  }
-
-  if (editAllBtn) editAllBtn.addEventListener("click", () => applyEdit([]));
-  if (undoBtn) undoBtn.addEventListener("click", () => applyUndo([]));
-
   async function pollJob(jobId) {
     try {
       const resp = await fetch(`/api/scene_angles/jobs/${jobId}`);
       if (!resp.ok) return;
       const job = await resp.json();
-      currentJobId = job.job_id;
       renderViews(job.views);
-      if (job.edit_error) showEditError("編集エラー: " + job.edit_error);
       if (job.status === "running" || job.status === "queued") {
         showStatus(`生成中... (${job.progress} / ${job.total} アングル完了)`);
         progressWrap.classList.remove("hidden");
@@ -2709,6 +2598,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   const seedInput = document.getElementById("tp-seed-input");
   const subjectInput = document.getElementById("tp-subject-input");
   const removeBgInput = document.getElementById("tp-removebg-input");
+  const clawsInput = document.getElementById("tp-claws-input");
   const editBox = document.getElementById("tp-edit-box");
   const editInput = document.getElementById("tp-edit-input");
   const editSeed = document.getElementById("tp-edit-seed");
@@ -2716,10 +2606,8 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   const editAllBtn = document.getElementById("tp-edit-all-btn");
   const undoBtn = document.getElementById("tp-undo-btn");
   const editError = document.getElementById("tp-edit-error");
-  let currentJobId = null;
   const palmsInput = document.getElementById("tp-palms-input");
   const pawPadsInput = document.getElementById("tp-pawpads-input");
-  const clawsInput = document.getElementById("tp-claws-input");
   const tailPreset = document.getElementById("tp-tail-preset");
   const tailInput = document.getElementById("tp-tail-input");
   const bodyInput = document.getElementById("tp-body-input");
@@ -2739,6 +2627,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   let pollTimer = null;
   let busy = false;
   let totalViewCount = 4;
+  let currentJobId = null;   // 生成後の編集(/edit・/undo)の対象ジョブ
 
   const showError = (msg) => {
     errorEl.textContent = msg;
@@ -2849,12 +2738,12 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
         editBtn.addEventListener("click", () => applyEdit([v.key]));
         actions.appendChild(editBtn);
         if (v.has_prev) {
-          const undo1 = document.createElement("button");
-          undo1.type = "button";
-          undo1.className = "tiny-btn secondary";
-          undo1.textContent = "取り消す";
-          undo1.addEventListener("click", () => applyUndo([v.key]));
-          actions.appendChild(undo1);
+          const undoOne = document.createElement("button");
+          undoOne.type = "button";
+          undoOne.className = "tiny-btn secondary";
+          undoOne.textContent = "取り消す";
+          undoOne.addEventListener("click", () => applyUndo([v.key]));
+          actions.appendChild(undoOne);
         }
         tile.appendChild(actions);
       }
@@ -2862,6 +2751,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     }
   }
 
+  // --- 生成後の編集(何度でも適用できる汎用Edit)。/edit と /undo を叩く ---
   const showEditError = (msg) => {
     editError.textContent = msg || "";
     editError.classList.toggle("hidden", !msg);
@@ -2913,8 +2803,8 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     }
   }
 
-  if (editAllBtn) editAllBtn.addEventListener("click", () => applyEdit([]));
-  if (undoBtn) undoBtn.addEventListener("click", () => applyUndo([]));
+  editAllBtn.addEventListener("click", () => applyEdit([]));
+  undoBtn.addEventListener("click", () => applyUndo([]));
 
   async function pollJob(jobId) {
     try {
@@ -2950,9 +2840,9 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
       pollTimer = null;
       busy = false;
       generateBtn.disabled = false;
-      progressWrap.classList.add("hidden");
       editAllBtn.disabled = false;
       editBox.classList.remove("hidden");
+      progressWrap.classList.add("hidden");
       if (job.status === "done") {
         showStatus("完了しました。image-3d へ渡すのは正面・背面の2枚です。");
       } else {

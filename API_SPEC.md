@@ -1576,7 +1576,7 @@ Content-Type: `multipart/form-data`。
 | `seed` | int | 任意 | `0` | 0=ビューごとにランダム |
 | `views` | string | 任意 | `""`(=4種全部) | カンマ区切りのビューID。未知IDは400。生成順は定義順に正規化(frontが先) |
 | `subject` | string | 任意 | `"auto"` | 被写体タイプ。`auto`=中立(毛皮/肉球/髪のどの語彙も使わない)/ `animal`=動物・ぬいぐるみ(fur/paws/paw pads)/ `human`=人物・リアルな人形(hair/hands/fingers)。他の値は400 |
-| `palms` | string | 任意 | `"forward"` | `forward`(手のひらをカメラへ=リグ用Tポーズの標準)/ `natural`(指示しない)。他の値は400 |
+| `palms` | string | 任意 | `"forward"` | `forward` は「手のひらを正面へ向け、その内側全面が見えるように」まで指示する(補強句がないと seed 次第で手が下向きになる実測があったため)。| `forward`(手のひらをカメラへ=リグ用Tポーズの標準)/ `natural`(指示しない)。他の値は400 |
 | `fur_color` | string | 任意 | `""` | 毛色の色名(例 `cream white`)。空なら `claws="none"` かつ動物型のとき**入力画像から自動推定**する(rembgで被写体マスクを取り、彩度の低い画素の中央値を色名へ写す)。推定結果はジョブJSONの `fur_color_detected` に入る |
 | `claws` | string | 任意 | `"none"` | 爪。`none`=爪なし(ぬいぐるみでは自然)/ `auto`=参照画像に任せる / 自由記述(例 `short white claws`)。`subject` が `animal` に解決されるときのみ有効 |
 | `paw_pads` | string | 任意 | `"auto"` | 肉球の色などの自由記述(例 `pink`)。`subject` が `animal` に解決されるときだけプロンプトへ入る。`none`=肉球に言及しない(`subject=auto` なら `human` 扱い)、色の明示指定は `subject=auto` でも `animal` 扱いになる |

@@ -145,8 +145,19 @@ _PALMS_FORWARD_HUMAN = (
 )
 # 中立(subject="auto"): 手が paw なのか hand なのかを書かない。動物語彙を書くと
 # リアルな人形に肉球が付き、人間語彙を書くとぬいぐるみの前足が人間の手になるため。
+#
+# **「手のひらが正面を向かない」報告への対処(2026-07-27)**: 当初の中立文
+# "both palms open and rotated to face the camera" は動物型・人物型の文言と違って
+# **補強句が無く、効きが不安定**だった(seedを変えて計測: 手のひら正面時に見える
+# 肉球の面積が 5,354 / 6,024 / 10,149px と境界域でばらつき、ユーザー実行分でも
+# 5,164〜6,331px。動物型は "so that the paw pads are clearly visible"、人物型は
+# "fingers spread" という補強句を持つため安定していた)。
+# 中立にも補強句("whole inner surface ... clearly visible")を付けたところ
+# 14,311 / 16,533 / 16,615px と3/3で安定した(句の位置を末尾へ移しても同等だったため
+# 位置は変えず文言のみ強化した)。
 _PALMS_FORWARD_NEUTRAL = (
-    "both palms open and rotated to face the camera"
+    "both palms open and rotated to face the camera so that the whole inner "
+    "surface of each palm is clearly visible"
 )
 
 # 背面ビュー用: 手のひらは(正面へ向けたまま)カメラの反対を向くので、見えるのは手の甲。
