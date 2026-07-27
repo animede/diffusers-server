@@ -719,6 +719,16 @@
           <div class="form-grid">
             <label>seed(0=ランダム) <input type="number" id="tp-seed-input" value="0" step="1"></label>
           </div>
+          <label>色調整の指示(任意・生成後に自動で2パス目のEditを実行)
+            <input type="text" id="tp-recolor-input"
+                   placeholder="例: Make the fur a warmer cream tone with richer shading">
+          </label>
+          <p class="form-hint">
+            入力しておくと、各ビューの生成直後に<strong>同じ指示で自動的に</strong>色調整のEditが走ります
+            (正面は調整後の画像を後続ビューの参照に使うので色が揃います)。生成回数が2倍に
+            なり、<strong>強い指示は毛色や造形も動かします</strong>。生成後に何度でも試したい場合は
+            右側の「生成後の編集」を使ってください。
+          </p>
           <label class="checkbox-row">
             <input type="checkbox" id="tp-removebg-input">
             背景を削除した透過PNG(<code>_nobg.png</code>)も生成する

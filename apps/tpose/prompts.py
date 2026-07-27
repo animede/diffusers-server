@@ -306,6 +306,36 @@ def _claws_clause(claws: str, subject_kind: str, fur_color: str = "") -> str:
     return f"the paws have {claws.strip()}"
 
 
+# 背面ビューの「後頭部が黒髪になる」問題の**本当の対処**(2026-07-27、ユーザー報告
+# 「3回続けて髪が出た」を受けた再調査)。
+#
+# 以前「視点句の head を fur に変えれば解消」と記録したが、**それは seed 42 での偶然**
+# だった(訂正)。同じ文言でも別seedでは髪が出る: ユーザーの正面画像を入力に seed
+# 11/22/33 で計測した後頭部の黒髪面積は、動物型 520 / 52,727 / 54,183px、
+# 中立 3,500 / 53,261 / 53,047px と**2/3で失敗**していた。
+#
+# 効いた対処は「爪」「足の指」と同じ原理 = **具体的な色名で後頭部を明示する**:
+#   ○ animal: "the paw tips are soft, round and smooth and the back of the head is
+#     covered in <毛色> fur" を**末尾に1文で**置く -> 髪 2,038 / 1,693px(-96%)。
+#     爪抑制も同じ文に統合しているため背面の爪も出ない(実測 12 / 2px)。
+#   ○ neutral: "the back of the head is the same <毛色> color as the front of the head"
+#     -> 髪 2,167 / 1,809px。
+#   ✕ 長い爪抑制文の**後ろに**後頭部句を足すだけ -> 47,269 / 53,653px と**効かない**
+#     (末尾の1文が強いだけでなく、直前に長い句があると薄まる)。
+# human は後頭部が髪で正しいので何も足さない。
+def _back_head_clause(subject_kind: str, fur_color: str) -> str:
+    """背面ビュー末尾に置く後頭部の指示(animal では爪抑制も統合)。"""
+    color = (fur_color or "").strip()
+    if not color or subject_kind == "human":
+        return ""
+    if subject_kind == "animal":
+        return (
+            "the paw tips are soft, round and smooth and the back of the head is "
+            f"covered in {color} fur"
+        )
+    return f"the back of the head is the same {color} color as the front of the head"
+
+
 def _tail_clause(tail: str) -> str:
     """しっぽの指示句。
 
@@ -422,10 +452,16 @@ def build_prompt(view_key: str, palms: str = "forward", paw_pads: str = "auto",
         parts.append(tail_clause)
     if extra and extra.strip():
         parts.append(extra.strip())
-    # 爪抑制文は**必ず末尾**に置く(末尾の句が最も強く効くため。上のコメント参照)
-    claws_clause = _claws_clause(claws, subject_kind, fur_color)
-    if claws_clause:
-        parts.append(claws_clause)
+    # 末尾の句が最も強く効く(上のコメント参照)。背面ビューは「後頭部が黒髪になる」対策を
+    # 優先し、爪抑制を統合した1文を末尾に置く(_back_head_clause)。それ以外のビューは
+    # 従来どおり爪抑制文を末尾に置く。
+    back_head = _back_head_clause(subject_kind, fur_color) if view_key == "back" else ""
+    if back_head:
+        parts.append(back_head)
+    else:
+        claws_clause = _claws_clause(claws, subject_kind, fur_color)
+        if claws_clause:
+            parts.append(claws_clause)
     return ", ".join(parts)
 
 

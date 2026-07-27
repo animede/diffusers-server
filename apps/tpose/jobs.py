@@ -294,12 +294,15 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
         processed.save(os.path.join(job_dir, "input.png"))
 
         # 毛色の自動推定(rembg はCPU処理なのでGPUロック取得前に行う)。
-        # 爪抑制文("each toe is <毛色> fur right to the tip")で使う。
+        # 用途は2つ: (1) 爪抑制文("each toe is <毛色> fur right to the tip")、
+        # (2) **背面ビューの後頭部が黒髪になる問題の対策**("the back of the head is
+        # covered in <毛色> fur" / 中立では "... the same <毛色> color as the front")。
+        # (2) は中立モードでも必要なので、**human 以外なら常に推定する**
+        # (当初 animal 限定にしていたため、既定の中立で対策文が付かず髪が出続けた)。
         fur_color = (params.get("fur_color") or "").strip()
-        if (not fur_color
-                and (params.get("claws") or "none").strip().lower() == "none"
-                and resolve_subject(params.get("subject", "auto"),
-                                    params.get("paw_pads", "auto")) == "animal"):
+        if not fur_color and resolve_subject(
+                params.get("subject", "auto"),
+                params.get("paw_pads", "auto")) != "human":
             fur_color = generate_mod.sample_fur_color(processed)
             _update_job(job_id, fur_color_detected=fur_color)
 

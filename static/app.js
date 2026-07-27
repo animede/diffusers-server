@@ -2599,6 +2599,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   const subjectInput = document.getElementById("tp-subject-input");
   const removeBgInput = document.getElementById("tp-removebg-input");
   const clawsInput = document.getElementById("tp-claws-input");
+  const recolorInput = document.getElementById("tp-recolor-input");
   const editBox = document.getElementById("tp-edit-box");
   const editInput = document.getElementById("tp-edit-input");
   const editSeed = document.getElementById("tp-edit-seed");
@@ -2875,6 +2876,8 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     fd.append("palms", palmsInput.value);
     fd.append("paw_pads", pawPadsInput.value || "auto");
     fd.append("claws", clawsInput.value);
+    // 色調整の指示があれば生成時に渡す(各ビューの生成直後に2パス目が自動で走る)
+    if ((recolorInput.value || "").trim()) fd.append("recolor", recolorInput.value.trim());
     // 自由記述があればプリセットより優先
     fd.append("tail", (tailInput.value || "").trim() || tailPreset.value || "");
     // 自由記述があればプリセットより優先
