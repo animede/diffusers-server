@@ -724,6 +724,18 @@
             0.45→0.37まで伸びた)、体型を言語化するのが唯一効いた対処です
             (ぬいぐるみ・デフォルメ体型では指定推奨)。
           </p>
+          <label>衣装(背面から見た形。任意・背面ビューにのみ効く)
+            <input type="text" id="tp-costume-input"
+                   placeholder="例: the short cream lace bolero ends at the waist and its back is one continuous piece of lace">
+          </label>
+          <p class="form-hint">
+            <strong>前開きのベスト・カーディガン等で「背中にも前開きが描かれる」場合はここを
+            指定してください。</strong>既定では正面の見え方がそのまま背面に複製され、
+            背中の隙間からインナーが見えてしまいます(実測: 背中中央のインナー露出
+            51〜80%)。<strong>丈・範囲まで書くこと</strong> —
+            「背中を一枚で覆う」とだけ書くと衣装が伸びてワンピース化しました(実測)。
+            丈まで書いた例では 8〜13%(裾から見える正当な分)まで下がり、目視でも正解でした。
+          </p>
           <details>
             <summary>しっぽ参照画像(非推奨・実験用)</summary>
             <label>しっぽ形状の参照画像
@@ -796,14 +808,46 @@
                 <input type="checkbox" id="tp-edit-keeppose" checked>
                 ポーズ・構図・背景を維持する
               </label>
+              <label class="checkbox-row" style="align-self:end;">
+                <input type="checkbox" id="tp-edit-useref">
+                元画像も参照する(実験的)
+              </label>
+            </div>
+            <fieldset id="tp-edit-view-fieldset"
+                      style="border:1px solid #444; border-radius:6px; padding:6px 10px; margin-top:8px;">
+              <legend>対象ビュー(チェックしたものだけ編集)</legend>
+              <div id="tp-edit-view-checkboxes" class="form-grid"></div>
+              <div class="view-tile-actions" style="justify-content:flex-start; padding:4px 0 0;">
+                <button type="button" class="tiny-btn secondary" id="tp-edit-select-all-btn">全て選択</button>
+                <button type="button" class="tiny-btn secondary" id="tp-edit-select-none-btn">全て解除</button>
+              </div>
+            </fieldset>
+            <div class="view-tile-actions" style="justify-content:flex-start; padding:8px 0 0;">
+              <button type="button" class="tiny-btn" id="tp-edit-btn">選択したビューに適用</button>
+              <button type="button" class="tiny-btn" id="tp-edit-all-btn">全ビューに適用</button>
+              <button type="button" class="tiny-btn secondary" id="tp-undo-btn">選択したビューの編集を取り消す</button>
             </div>
             <div class="view-tile-actions" style="justify-content:flex-start; padding:8px 0 0;">
-              <button type="button" class="tiny-btn" id="tp-edit-all-btn">全ビューに適用</button>
-              <button type="button" class="tiny-btn secondary" id="tp-undo-btn">直前の編集を取り消す</button>
+              <button type="button" class="tiny-btn" id="tp-upscale-btn">選択したビューを2048へアップスケール</button>
             </div>
             <p class="form-hint" style="margin-top:6px;">
-              色調整だけでなく汎用の修正に使えます(「帽子を外す」等)。各タイルの
-              「このビューを編集」で1枚だけ適用も可能で、1世代分だけ元に戻せます。
+              Real-ESRGAN(x2)で拡大します。<strong>拡散モデルでの再生成ではないので内容は
+              変わりません</strong>(髪型・衣装がドリフトしない)。1枚あたり約2秒。
+              1024版はそのまま残り、<code>&lt;ビュー&gt;_2048.png</code> が追加されます
+              (透過版があるビューは2048で切り抜きを作り直します)。ZIPにも含まれます。
+              元画像を編集すると、古い2048版は自動で破棄されます。
+            </p>
+            <p class="form-hint" style="margin-top:6px;">
+              <strong>元画像も参照する</strong>: 入力画像を2枚目の参照として渡し、
+              「元の髪型に戻す」等で元の見た目を参照させます。ただし
+              <strong>元画像のポーズ・背景まで引き戻す事故があります</strong>
+              (実測: 3seed中1つでTポーズが崩れて自然な立ち姿になり、別のseedでは背景が
+              市松模様になりました)。既定OFF、必要なときだけONにしてください。
+            </p>
+            <p class="form-hint" style="margin-top:6px;">
+              色調整だけでなく汎用の修正に使えます(「帽子を外す」等)。
+              <strong>4枚のうち一部だけ直したいときは「対象ビュー」で選んで「選択したビューに適用」</strong>
+              (各タイルの「このビューを編集」でも1枚だけ適用できます)。編集は1世代分だけ元に戻せます。
               <strong>強い指示は毛色や造形も動かします</strong>(実測: 暖色化の指示で毛色が黄褐色へ寄り爪が復活)。
               背景透過版があるビューは編集後に作り直します。
             </p>

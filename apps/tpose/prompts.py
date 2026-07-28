@@ -417,10 +417,48 @@ def _view_clause(view_key: str, subject_kind: str, first_stage: bool = False) ->
 # 結論: 明るさは**プロンプトではなく切り抜き側で対処する**(`_cutout_rgba()` の
 # 白キーイング。背面の取りこぼしは 17,338px -> 774px まで解消済み)。
 # なお `extra_prompt` も同じ理由で**爪抑制文より前**に差し込む(下記 build_prompt)。
+# 背面ビューで「衣装が前側の見え方のまま描かれる」問題(2026-07-28、ユーザー報告
+# 「衣装のベストが後ろのときに前側のようになりました」)。
+#
+# 症状: 前開きのレースのボレロ(ベスト)を着た人物の背面で、**背中側にも前開きのV字**が
+# 描かれ、その隙間からインナー(オレンジ)が見える。本来、背面から見た上着は一枚布の
+# 背パネルで覆われる。
+#
+# 原因: 背面プロンプトの**末尾**を `_KEEP_CLAUSE`(「デザイン・衣装・色を全く同じに
+# 保つ」)が占めている。参照画像は正面のTポーズなので、最も強い位置で「同じに保て」と
+# 言われたモデルは**正面の見え方をそのまま複製**する。
+#
+# 実測(レースボレロの人物、背中の中央上部帯に占めるインナー色の割合。低いほど良い。
+# ただし正解は0ではない: ボレロの裾から下はインナーが見えるのが正しい):
+#   修正なし                                        51.2% / 80.1%(+ユーザー報告 70.2%)
+#   ✕ 汎用文「衣装は背面から見え、背パネルと縫い目が見える」を末尾へ追加
+#                                                   79.8% / 46.3% -> **効果なし**
+#     (しかも一方の seed では**ボレロ自体が消えて**インナーに縫い目が付いただけになった)
+#   ○ 具体記述「the cream lace bolero covers the whole back in one continuous piece
+#     of lace」                                      1.9% / 0.8% -> 背中は直ったが
+#     **ボレロが膝丈のワンピースに伸び**て白いスカートが隠れた(記述が丈に触れていない)
+#   ◎ 丈まで含めた具体記述「the short cream lace bolero ends at the waist and its back
+#     is one continuous piece of lace, the white pencil skirt below it is unchanged」
+#                                                    8.3% / 13.0% -> 目視でも正解
+#     (背中は一枚のレース、丈は腰まで、スカートも無傷)
+#
+# 結論: `body`(体型)・`tail`(しっぽ)と全く同じ「**汎用文は効かない。具体的な言語化
+# だけが効く**」パターンだった。そのため汎用句を既定で入れるのはやめ、ユーザーが
+# 記述する `costume` パラメータとして提供する。**丈・範囲まで書かないと衣装が伸びる**
+# 点も含めてUIのヒントに書いてある。
+#
+# 適用は背面ビューのみ(「背中がどう見えるか」の記述なので、正面・45度に入れると害になる)。
+def _costume_clause(view_key: str, costume: str) -> str:
+    costume = (costume or "").strip()
+    if not costume or view_key != "back":
+        return ""
+    return costume
+
+
 def build_prompt(view_key: str, palms: str = "forward", paw_pads: str = "auto",
                  tail: str = "", body: str = "", extra: str = "",
                  first_stage: bool = False, subject: str = "auto",
-                 claws: str = "none", fur_color: str = "") -> str:
+                 claws: str = "none", fur_color: str = "", costume: str = "") -> str:
     """1ビュー分のプロンプトを組み立てる。
 
     句の順序は実測で決めてある(下の「脚が伸びる問題」のコメント参照):
@@ -456,12 +494,20 @@ def build_prompt(view_key: str, palms: str = "forward", paw_pads: str = "auto",
     # 優先し、爪抑制を統合した1文を末尾に置く(_back_head_clause)。それ以外のビューは
     # 従来どおり爪抑制文を末尾に置く。
     back_head = _back_head_clause(subject_kind, fur_color) if view_key == "back" else ""
+    costume_clause = _costume_clause(view_key, costume)
+    # animal は末尾の後頭部/爪の対策文が実測で効いているため、衣装記述はその**前**に置く。
+    # それ以外(中立・人物)はこれらの対策文が空なので、衣装記述が末尾(最強)に来る。
+    if subject_kind == "animal" and costume_clause:
+        parts.append(costume_clause)
+        costume_clause = ""
     if back_head:
         parts.append(back_head)
     else:
         claws_clause = _claws_clause(claws, subject_kind, fur_color)
         if claws_clause:
             parts.append(claws_clause)
+    if costume_clause:
+        parts.append(costume_clause)
     return ", ".join(parts)
 
 
@@ -501,21 +547,57 @@ BODY_PRESETS = [
 #     (中央値 148)。
 # つまり効果の強さは文言次第で、**強い指示は同一性も動かす**。既定は無効(空文字)にし、
 # 文言はユーザーに委ねる(プリセットは用意しない: 望ましい色は用途ごとに違うため)。
-_RECOLOR_KEEP = (
-    "keep the pose, composition, design and background exactly the same, "
-    "plain white background, full body visible from head to toe"
+# 2026-07-28修正(ユーザー指摘「髪色を変えると髪型まで変わる」):
+# 旧実装は `"{指示}, keep the pose, composition, design and background exactly the
+# same, plain white background, full body visible from head to toe"` だった。
+# Qwen-Image-Edit は本来「一部だけ変えて他は維持する」のが得意なのに、この文には
+# **部分編集を壊す要素が3つ**あった:
+#   1. `design ... exactly the same` が指示そのものと矛盾する(「髪を黒く」は
+#      デザイン変更)。矛盾したプロンプトを与えると、モデルは折り合いをつけるために
+#      対象領域を作り直す = 髪型ごと変わる。
+#   2. `plain white background, full body visible from head to toe` は**1パス目
+#      (Tポーズ生成)用の構図指示**であり、2パス目に持ち込むと「全身を描き直す」
+#      方向へ働く(部分編集ではなく再生成に寄る)。
+#   3. **語順**: このファイル冒頭の実測どおり「末尾の1文が最も強く効く」のに、
+#      末尾を keep 文が占め、ユーザーの指示が最も弱い先頭に置かれていた。
+# そこで keep 文を**前置き**にして短くし(維持したいのはポーズ・画角・背景だけ)、
+# **ユーザーの指示を末尾**へ置く。"design" と全身フレーミングの語は落とす。
+_EDIT_KEEP_PREFIX = (
+    "Keep the same pose, camera angle, framing and background, and keep every "
+    "other detail of the character unchanged. Change only this: "
+)
+
+# 2枚目の参照(元画像)を渡すときの前置き(ユーザー提案 2026-07-28)。
+# 生成の2段目以降が [生成した正面, 元画像] の2枚参照で連鎖しているのと同じ手。
+# **どの画像が何なのかを明示しないと、モデルが元画像のポーズ・背景へ引き戻す**ため、
+# 「1枚目=編集対象(こちらのポーズ・画角を保つ)、2枚目=同じキャラの元画像(見た目の
+# 参照)」と書き分ける。指示文は従来どおり末尾(最強の位置)に置く。
+_EDIT_REFERENCE_PREFIX = (
+    "The first image is the picture to edit. The second image is the original "
+    "reference photo of the same character, use it only to look up how the "
+    "character originally looks. Keep the pose, camera angle, framing and "
+    "background of the first image, and keep every other detail unchanged. "
+    "Change only this: "
 )
 
 
-def build_edit_prompt(instruction: str, keep_pose: bool = True) -> str:
+def build_edit_prompt(instruction: str, keep_pose: bool = True,
+                      with_reference: bool = False) -> str:
     """生成済みビューへ追加でかける Edit のプロンプトを組み立てる。
 
     色調整だけでなく汎用の修正指示に使える(「帽子を外す」「服を赤くする」等)。
-    keep_pose=True(既定)なら「ポーズ・構図・デザイン・背景は変えない」を付け、
-    Tポーズと白背景・画角を保つ。False なら指示文だけを渡す(構図ごと変えたい場合)。
+    keep_pose=True(既定)なら「ポーズ・画角・背景と、それ以外の細部は変えない」を
+    **前置き**し、指示文を末尾に置く(上のコメント参照)。False なら指示文だけを渡す
+    (構図ごと変えたい場合)。
+
+    with_reference=True なら「2枚目に元画像を渡している」前提の前置きを使う
+    (apps/tpose/jobs.py の _run_edit)。keep_pose=False のときは従来どおり指示文だけ。
     """
     instruction = instruction.strip()
-    return f"{instruction}, {_RECOLOR_KEEP}" if keep_pose else instruction
+    if not keep_pose:
+        return instruction
+    prefix = _EDIT_REFERENCE_PREFIX if with_reference else _EDIT_KEEP_PREFIX
+    return f"{prefix}{instruction}"
 
 
 def build_recolor_prompt(recolor: str) -> str:

@@ -1577,11 +1577,12 @@ Content-Type: `multipart/form-data`。
 | `views` | string | 任意 | `""`(=4種全部) | カンマ区切りのビューID。未知IDは400。生成順は定義順に正規化(frontが先) |
 | `subject` | string | 任意 | `"auto"` | 被写体タイプ。`auto`=中立(毛皮/肉球/髪のどの語彙も使わない)/ `animal`=動物・ぬいぐるみ(fur/paws/paw pads)/ `human`=人物・リアルな人形(hair/hands/fingers)。他の値は400 |
 | `palms` | string | 任意 | `"forward"` | `forward` は「手のひらを正面へ向け、その内側全面が見えるように」まで指示する(補強句がないと seed 次第で手が下向きになる実測があったため)。| `forward`(手のひらをカメラへ=リグ用Tポーズの標準)/ `natural`(指示しない)。他の値は400 |
-| `fur_color` | string | 任意 | `""` | 毛色の色名(例 `cream white`)。空なら `claws="none"` かつ動物型のとき**入力画像から自動推定**する(rembgで被写体マスクを取り、彩度の低い画素の中央値を色名へ写す)。推定結果はジョブJSONの `fur_color_detected` に入る |
+| `fur_color` | string | 任意 | `""` | 毛色の色名(例 `cream white`)。空なら **`subject` が `animal` に解決されるときだけ**入力画像から自動推定する(人物・中立では推定しない: 服や肌が低彩度な人物キャラでは `cream white` 等に誤推定し、背面の後頭部が白くなる実バグがあった)(rembgで被写体マスクを取り、彩度の低い画素の中央値を色名へ写す)。推定結果はジョブJSONの `fur_color_detected` に入る |
 | `claws` | string | 任意 | `"none"` | 爪。`none`=爪なし(ぬいぐるみでは自然)/ `auto`=参照画像に任せる / 自由記述(例 `short white claws`)。`subject` が `animal` に解決されるときのみ有効 |
 | `paw_pads` | string | 任意 | `"auto"` | 肉球の色などの自由記述(例 `pink`)。`subject` が `animal` に解決されるときだけプロンプトへ入る。`none`=肉球に言及しない(`subject=auto` なら `human` 扱い)、色の明示指定は `subject=auto` でも `animal` 扱いになる |
 | `tail` | string | 任意 | `""` | しっぽ形状の自由記述(例 `a long fluffy tail with a black tip, hanging down`)。`none`=しっぽなし、空/`auto`=指定なし |
 | `body` | string | 任意 | `""` | 体型の自由記述(例 `short stubby legs and a large head`)。**脚が伸びる劣化への主要な対処**。1段目(元画像からポーズを変える段)のプロンプトにのみ入る |
+| `costume` | string | 任意 | `""` | **背面から見た衣装**の自由記述(背面ビューのプロンプト末尾にのみ入る)。前開きのベスト・カーディガンが「背中にも前開きで描かれる」問題への対処。**丈・範囲まで書くこと**(例 `the short cream lace bolero ends at the waist and its back is one continuous piece of lace, the white pencil skirt below it is unchanged`。「背中を一枚で覆う」だけだと膝丈のワンピースへ伸びた) |
 | `extra_prompt` | string | 任意 | `""` | プロンプト末尾への追記 |
 | `recolor` | string | 任意 | `""` | 生成後に色を調整する**2パス目のEdit指示**(空なら実行しない)。例 `Make the fur a warmer cream tone with richer shading`。全ビューへ同じ指示を適用し、正面は調整後の画像を後続ビューの参照に使う(色をビュー間で揃えるため)。生成回数が2倍になる |
 | `bg_method` | string | 任意 | `"anime"` | 背景除去の方式(`anime`=アニメ・キャラクター向け / `rembg`=汎用)。Tポーズは被写体がキャラクターのため既定を `anime` にしている(淡い色の毛の取りこぼしが実測 27,232px → 13,733px) |
@@ -1660,13 +1661,35 @@ Content-Type: `multipart/form-data`。
 | `prompt` | string | 必須 | - | 修正指示。空・空白のみは400 |
 | `views` | string | 任意 | `""`(=完了済み全ビュー) | カンマ区切りのビューID。このジョブに無いIDは400 |
 | `seed` | int | 任意 | `0` | 0=ランダム |
-| `keep_pose` | bool | 任意 | `true` | trueなら「ポーズ・構図・デザイン・背景は変えない」を付ける |
+| `keep_pose` | bool | 任意 | `true` | trueなら「ポーズ・画角・背景と、それ以外の細部は変えない」を**前置き**し、指示文を末尾に置く(2026-07-28修正。旧実装は1パス目用の構図指示 `plain white background, full body visible from head to toe` と `design ... exactly the same` を**末尾**に置いており、部分編集が壊れて髪色を変えると髪型まで変わっていた) |
+| `use_reference` | bool | 任意 | `false` | trueなら**元画像を2枚目の参照として渡す**(「元の髪型に戻す」等で元の見た目を参照できる)。ただし**元画像のポーズ・背景まで引き戻す事故**がある(実測で3seed中1つがTポーズを失い自然な立ち姿へ戻り、別seedでは背景が市松模様になった)ため既定OFF |
 
 **レスポンス**: `{"job_id": "...", "views": ["front","back"], "status": "editing"}`。
 進行状況は `GET /jobs/{job_id}`(ジョブ `status="editing"`、各ビュー `status="editing"`)で
 ポーリングする。直前の画像は `<key>_prev.png` へ1世代退避され、**透過版を持つビューは
 Edit後に作り直す**。ZIPも再生成される。編集の失敗はジョブの `edit_error` に入る。
 別の生成/編集が実行中なら409。
+
+### POST /api/tpose/jobs/{job_id}/upscale
+
+生成済みビューを **2048へアップスケール**する(2026-07-28追加)。
+Content-Type: `multipart/form-data`。
+
+| 名前 | 型 | 必須/任意 | 既定値 | 説明 |
+|---|---|---|---|---|
+| `views` | string | 任意 | `""`(=完了済み全ビュー) | カンマ区切りのビューID |
+| `target` | int | 任意 | `2048` | 出力の長辺(1024〜4096。範囲外は400) |
+
+**Real-ESRGAN x2(RRDBNet、`core/upscale.py`、spandrel 経由)による決定論的な拡大**で、
+拡散モデルでの再生成ではないため**内容は書き換わらない**(髪型・衣装がドリフトしない)。
+1024版はそのまま残り `<key>_2048.png` が追加される。透過版を持つビューは
+**2048で切り抜きを作り直す**。ZIP・個別ダウンロード・画像配信(`{key}_2048` /
+`{key}_2048_nobg`)にも対応。元画像を `/edit`・`/undo` で変えると古い2048版は自動破棄される。
+実測: 1024→2048 が **2.0秒/枚・ピークVRAM 4.09GB**。重みは `ai-forever/Real-ESRGAN` の
+`RealESRGAN_x2.pth`(64MB、`DS_UPSCALE_MODEL` でローカルパスに差し替え可)。
+
+**レスポンス**: `{"job_id": "...", "views": ["front","back"], "status": "upscaling", "target": 2048}`。
+ジョブ `status="upscaling"`、失敗は `upscale_error` に入る。別の生成/編集が実行中なら409。
 
 ### POST /api/tpose/jobs/{job_id}/undo
 

@@ -107,6 +107,12 @@ def _init_job(job_id: str, seed: int, views: list, params: dict):
             "download_url": None,
             "nobg_url": None,
             "nobg_download_url": None,
+            # 2048アップスケール版(POST /jobs/{id}/upscale で作る)
+            "up_url": None,
+            "up_download_url": None,
+            "up_nobg_url": None,
+            "up_nobg_download_url": None,
+            "up_size": None,
             "has_prev": False,
             # rev: この画像が書き換わった回数。UIは rev が変わったときだけ画像を
             # 再読み込みする(毎回キャッシュバスターを付けるとポーリングのたびに
@@ -167,7 +173,8 @@ def _copy_generated_image(meta: dict, dest_path: str) -> None:
 def _build_zip(job_dir: str, keys: list) -> Optional[str]:
     """生成済みビューをZIPにまとめる(一括ダウンロード用)。
 
-    背景透過版(`<key>_nobg.png`)があれば併せて含める。
+    背景透過版(`<key>_nobg.png`)とアップスケール版(`<key>_2048*.png`)があれば
+    併せて含める。
     """
     paths = [(k, os.path.join(job_dir, f"{k}.png")) for k in keys]
     paths = [(k, p) for k, p in paths if os.path.exists(p)]
@@ -177,9 +184,10 @@ def _build_zip(job_dir: str, keys: list) -> Optional[str]:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for key, path in paths:
             zf.write(path, arcname=f"{key}.png")
-            nobg = os.path.join(job_dir, f"{key}_nobg.png")
-            if os.path.exists(nobg):
-                zf.write(nobg, arcname=f"{key}_nobg.png")
+            for suffix in ("_nobg", "_2048", "_2048_nobg"):
+                extra = os.path.join(job_dir, f"{key}{suffix}.png")
+                if os.path.exists(extra):
+                    zf.write(extra, arcname=f"{key}{suffix}.png")
         input_path = os.path.join(job_dir, "input.png")
         if os.path.exists(input_path):
             zf.write(input_path, arcname="input.png")
@@ -313,14 +321,24 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
 
         # 毛色の自動推定(rembg はCPU処理なのでGPUロック取得前に行う)。
         # 用途は2つ: (1) 爪抑制文("each toe is <毛色> fur right to the tip")、
-        # (2) **背面ビューの後頭部が黒髪になる問題の対策**("the back of the head is
+        # (2) 背面ビューの後頭部が黒髪になる問題の対策("the back of the head is
         # covered in <毛色> fur" / 中立では "... the same <毛色> color as the front")。
-        # (2) は中立モードでも必要なので、**human 以外なら常に推定する**
-        # (当初 animal 限定にしていたため、既定の中立で対策文が付かず髪が出続けた)。
+        #
+        # **自動推定は animal のときだけ使う**(2026-07-28修正、ユーザー報告
+        # 「何も指定しないと髪型は維持されるが後ろだけ白くなる」):
+        # sample_fur_color() は被写体全体の**低彩度画素**の中央値を毛色とみなす。
+        # ぬいぐるみ(全身が毛)では妥当だが、**服や肌が低彩度な人物キャラでは誤推定**する。
+        # 実測: 茶髪+白Tシャツのアニメキャラ -> "cream white" と推定 -> 背面プロンプトが
+        # 「後頭部は cream white」になり、**後頭部だけ白くなる**(サーバが自分で
+        # 白くしていた)。頭部だけを測る案も検証したが、帽子・アクセサリを拾って
+        # 不安定だった(momo は上10%が帽子の赤、上記キャラは上15%以上で肌が混ざり pink)
+        # ため、**推定は毛で覆われた被写体(animal)に限定**する。
+        # 中立/人物で後頭部の色を固定したい場合は fur_color を明示指定する
+        # (明示値は従来どおり中立でも使われる)。
         fur_color = (params.get("fur_color") or "").strip()
         if not fur_color and resolve_subject(
                 params.get("subject", "auto"),
-                params.get("paw_pads", "auto")) != "human":
+                params.get("paw_pads", "auto")) == "animal":
             fur_color = generate_mod.sample_fur_color(processed)
             _update_job(job_id, fur_color_detected=fur_color)
 
@@ -350,6 +368,7 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
                 fur_color=fur_color,
                 tail=params["tail"],
                 body=params["body"],
+                costume=params.get("costume", ""),
                 extra=params["extra_prompt"],
                 first_stage=first_stage,
             )
@@ -472,6 +491,7 @@ async def generate(
     fur_color: str = Form(""),
     tail: str = Form(""),
     body: str = Form(""),
+    costume: str = Form(""),
     extra_prompt: str = Form(""),
     recolor: str = Form(""),
     remove_bg: bool = Form(False),
@@ -506,6 +526,12 @@ async def generate(
     - tail: しっぽ形状の自由記述(例 "a long fluffy tail with a black tip")。
       "none" でしっぽなし、空/"auto" で指定なし(未指定だとビューごとに形状が
       揺れるため、入力画像にしっぽが写っていない場合は指定推奨)
+    - costume: **背面から見た衣装**の自由記述(任意、背面ビューにのみ効く)。
+      前開きのベスト・カーディガン等は、既定だと**背中側にも前開きが描かれ**
+      インナーが見えてしまう(apps/tpose/prompts.py の該当コメント参照)。例:
+      "the short cream lace bolero ends at the waist and its back is one continuous
+      piece of lace, the white pencil skirt below it is unchanged"。
+      **丈・範囲まで書くこと**(書かないと衣装が伸びてワンピース化した実測あり)
     - extra_prompt: プロンプト末尾へ追記する自由記述(任意)
     - recolor: 生成後に色を調整する2パス目の指示(任意、空なら実行しない)。例
       "Make the fur a warmer cream tone with richer shading"。全ビューへ同じ指示を
@@ -579,6 +605,7 @@ async def generate(
         "fur_color": fur_color,
         "tail": tail,
         "body": body,
+        "costume": costume,
         "extra_prompt": extra_prompt,
         "tail_ref": bool(tail_ref_path),
         "size": generate_mod.edit_size(),
@@ -608,9 +635,14 @@ async def get_job(job_id: str):
 def _resolve_view_file(key: str) -> str:
     """URLの `{key}` を許可リストで検証してファイル名へ解決する。
 
-    `<view>` は白背景版、`<view>_nobg` は背景透過版(remove_bg=true時のみ存在)。
+    `<view>` は白背景版、`<view>_nobg` は背景透過版(remove_bg=true時のみ存在)、
+    `<view>_2048` / `<view>_2048_nobg` はアップスケール版(upscale 実行時のみ存在)。
     """
-    base = key[:-5] if key.endswith("_nobg") else key
+    base = key
+    for suffix in ("_2048_nobg", "_2048", "_nobg"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
     if base not in VIEW_BY_KEY:
         raise HTTPException(status_code=404, detail="不正なビューIDです")
     return f"{key}.png"
@@ -699,12 +731,40 @@ def _refresh_has_prev(job_id: str, job_dir: str) -> None:
             v["has_prev"] = os.path.exists(os.path.join(job_dir, f"{v['key']}_prev.png"))
 
 
-def _run_edit(job_id: str, keys: list, instruction: str, seed: int, keep_pose: bool):
-    """選択ビューへ順に Edit をかけ、透過版・ZIPを作り直す。"""
+def _run_edit(job_id: str, keys: list, instruction: str, seed: int, keep_pose: bool,
+              use_reference: bool = False):
+    """選択ビューへ順に Edit をかけ、透過版・ZIPを作り直す。
+
+    use_reference(**既定 False**): 元画像(input.png)を2枚目の参照として渡す
+    (ユーザー提案 2026-07-28「生成後のEDITをレファレンス付きにすれば、オリジナルを
+    参照して修正ができるのでは」)。生成の2段目以降が [生成した正面, 元画像] の
+    2枚参照で連鎖しているのと同じ手で、Edit も QwenImageEditPlusPipeline なので
+    参照は最大3枚まで渡せる(MAX_EDIT_IMAGES)。プロンプト側で
+    「1枚目=編集対象、2枚目=同じキャラの元画像」と明示する
+    (build_edit_prompt(with_reference=True))。
+
+    **既定を False にした理由(実機A/B)**: 参照ありは元の見た目をよく思い出す
+    (指示 "restore the original hairstyle" で元のまとめ髪・前髪に近づいた)一方、
+    **元画像のポーズ・背景まで引き戻す事故**が起きる。被写体bboxの幅/高さ比
+    (Tポーズは腕を広げるので大きい)で測ると
+      編集前 0.90 / 参照なし 0.89 / 参照あり 0.87・0.87・**0.27**
+    となり、3seed中1つで**Tポーズが壊れて元写真の自然な立ち姿に戻った**。
+    別のseedでは背景が市松模様になった。衣装の修正でも、参照ありは
+    「背中中央のインナー露出 1.3%(参照なし 6.1%)」と数値上は良いのに、
+    **目視ではボレロが膝丈のワンピースへ伸びていた**(参照なしは腰丈で正解)。
+    そのため「元の見た目を思い出させたいときだけ明示的にONにする」運用にする。
+    """
     global current_job_id
     job_dir = _job_dir(job_id)
     got_lock = False
-    prompt = build_edit_prompt(instruction, keep_pose=keep_pose)
+    reference = None
+    if use_reference:
+        ref_path = os.path.join(job_dir, "input.png")
+        if os.path.exists(ref_path):
+            with Image.open(ref_path) as ref:
+                reference = ref.convert("RGB")
+    prompt = build_edit_prompt(instruction, keep_pose=keep_pose,
+                               with_reference=reference is not None)
     try:
         _update_job(job_id, status="editing", edit_error=None)
         got_lock = generate_mod.acquire_generation_lock(blocking=True)
@@ -719,8 +779,11 @@ def _run_edit(job_id: str, keys: list, instruction: str, seed: int, keep_pose: b
             shutil.copy2(img_path, os.path.join(job_dir, f"{key}_prev.png"))
             try:
                 with Image.open(img_path) as current:
+                    refs = [current.convert("RGB")]
+                    if reference is not None:
+                        refs.append(reference)
                     meta = generate_mod.generate_view(
-                        [current.convert("RGB")],
+                        refs,
                         prompt=prompt,
                         seed=seed,
                         negative_prompt=NEGATIVE_PROMPT,
@@ -734,6 +797,7 @@ def _run_edit(job_id: str, keys: list, instruction: str, seed: int, keep_pose: b
                     )
                 _copy_generated_image(meta, img_path)
                 _bump_view_rev(job_id, key)
+                _clear_upscaled(job_id, job_dir, key)
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
                 _update_view(job_id, key, status="done")
@@ -773,6 +837,7 @@ async def edit_views(
     views: str = Form(""),
     seed: int = Form(0),
     keep_pose: bool = Form(True),
+    use_reference: bool = Form(False),
 ):
     """生成済みビューへ追加の Edit をかける(何度でも呼べる)。
 
@@ -780,7 +845,13 @@ async def edit_views(
       "remove the hat")
     - views: カンマ区切りのビューID(省略=完了済み全ビュー)
     - seed: 乱数シード(0=ランダム)
-    - keep_pose: true(既定)なら「ポーズ・構図・デザイン・背景は変えない」を付ける
+    - keep_pose: true(既定)なら「ポーズ・画角・背景と、それ以外の細部は変えない」を
+      前置きする(指示文は末尾に置く)
+    - use_reference: **既定 false**。true にすると元画像を2枚目の参照として渡し、
+      「元の髪型・衣装へ戻す」系の修正で元の見た目を参照できる。ただし
+      **元画像のポーズ・背景まで引き戻す事故がある**(実機A/Bで3seed中1つが
+      Tポーズを失い自然な立ち姿に戻った。_run_edit のコメント参照)ので、
+      必要なときだけONにすること
     直前の画像は `<key>_prev.png` に1世代退避され、`POST /jobs/{job_id}/undo` で戻せる。
     透過版を持つビューは Edit 後に作り直す。
     """
@@ -804,10 +875,148 @@ async def edit_views(
         current_job_id = job_id
 
     thread = threading.Thread(
-        target=_run_edit, args=(job_id, keys, prompt, seed, bool(keep_pose)), daemon=True
+        target=_run_edit,
+        args=(job_id, keys, prompt, seed, bool(keep_pose), bool(use_reference)),
+        daemon=True,
     )
     thread.start()
     return {"job_id": job_id, "views": keys, "status": "editing"}
+
+
+# ============================================================================
+# アップスケール(2048)
+#
+# 3D化・リグへ渡す前に解像度を上げるための後処理(ユーザー要望 2026-07-28)。
+# **Real-ESRGAN x2(GAN系、決定論的)を使い、拡散モデルでの再生成はしない**:
+# 再生成だと解像度は上がっても細部が書き換わる(このアプリが繰り返し戦ってきた
+# 髪型・衣装のドリフトがそのまま起きる)。詳細は core/upscale.py の冒頭コメント。
+# 白背景版を拡大し、透過版を持つビューは**拡大後に切り抜きを作り直す**
+# (2048で切り抜いた方が輪郭が精細になる)。
+# ============================================================================
+def _clear_upscaled(job_id: str, job_dir: str, key: str) -> None:
+    """元画像が書き換わったら、古いアップスケール版は削除する(取り違え防止)。"""
+    removed = False
+    for suffix in ("_2048", "_2048_nobg"):
+        path = os.path.join(job_dir, f"{key}{suffix}.png")
+        if os.path.exists(path):
+            os.remove(path)
+            removed = True
+    if removed:
+        _update_view(job_id, key, up_url=None, up_download_url=None,
+                     up_nobg_url=None, up_nobg_download_url=None, up_size=None)
+
+
+def _run_upscale(job_id: str, keys: list, target: int):
+    global current_job_id
+    job_dir = _job_dir(job_id)
+    got_lock = False
+    try:
+        _update_job(job_id, status="upscaling", upscale_error=None)
+        got_lock = generate_mod.acquire_generation_lock(blocking=True)
+        gpu.empty_cache()
+
+        from core.upscale import upscale_image
+
+        done_keys = []
+        for key in keys:
+            src = os.path.join(job_dir, f"{key}.png")
+            if not os.path.exists(src):
+                continue
+            _update_view(job_id, key, status="upscaling")
+            try:
+                with Image.open(src) as im:
+                    out = upscale_image(im.convert("RGB"), target=target)
+                out.save(os.path.join(job_dir, f"{key}_2048.png"))
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                _update_view(job_id, key, status="done")
+                _update_job(job_id, status="done", upscale_error=f"{key}: {exc}")
+                return
+            _update_view(
+                job_id, key, status="done", up_size=f"{out.width}x{out.height}",
+                up_url=f"/api/tpose/jobs/{job_id}/images/{key}_2048.png",
+                up_download_url=f"/api/tpose/jobs/{job_id}/download/{key}_2048.png",
+            )
+            done_keys.append(key)
+
+        # 透過版を持つビューは 2048 で切り抜きを作り直す(CPU処理なのでロック解放後)。
+        nobg_keys = [k for k in done_keys
+                     if os.path.exists(os.path.join(job_dir, f"{k}_nobg.png"))]
+        if nobg_keys:
+            if got_lock:
+                generate_mod.release_generation_lock()
+                got_lock = False
+            _update_job(job_id, status="removing_bg")
+            method = (jobs[job_id].get("params") or {}).get("bg_method", "anime")
+            from core.bg import remove_background, resolve_method
+
+            method = resolve_method(method)
+            for key in nobg_keys:
+                path = os.path.join(job_dir, f"{key}_2048.png")
+                try:
+                    with Image.open(path) as im:
+                        rgb = im.convert("RGB")
+                        rgba = _cutout_rgba(rgb, remove_background(rgb, method=method))
+                    rgba.save(os.path.join(job_dir, f"{key}_2048_nobg.png"))
+                except Exception as exc:  # noqa: BLE001
+                    traceback.print_exc()
+                    _update_view(job_id, key, nobg_error=str(exc))
+                    continue
+                _update_view(
+                    job_id, key,
+                    up_nobg_url=f"/api/tpose/jobs/{job_id}/images/{key}_2048_nobg.png",
+                    up_nobg_download_url=f"/api/tpose/jobs/{job_id}/download/{key}_2048_nobg.png",
+                )
+
+        _build_zip(job_dir, [v["key"] for v in jobs[job_id]["views"]])
+        _update_job(job_id, status="done")
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        _update_job(job_id, status="done", upscale_error=str(exc))
+    finally:
+        progress_mod.finish()
+        if got_lock:
+            generate_mod.release_generation_lock()
+        with current_job_lock:
+            current_job_id = None
+
+
+@router.post("/jobs/{job_id}/upscale")
+async def upscale_views(job_id: str, views: str = Form(""), target: int = Form(2048)):
+    """生成済みビューを `target` px(既定2048)へアップスケールする。
+
+    - views: カンマ区切りのビューID(省略=完了済み全ビュー)
+    - target: 出力の長辺(既定 2048)。1024〜4096
+
+    Real-ESRGAN x2(`core/upscale.py`)で拡大するので**内容は書き換わらない**
+    (拡散モデルでの再生成ではない)。元の1024版はそのまま残り、
+    `<key>_2048.png` が追加される。透過版を持つビューは 2048 で切り抜きを作り直す。
+    元画像を編集(`/edit`・`/undo`)すると、古いアップスケール版は自動的に破棄される。
+    """
+    global current_job_id
+    _check_job_id(job_id)
+    if target < 1024 or target > 4096:
+        raise HTTPException(status_code=400, detail="target は 1024〜4096 で指定してください。")
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+        job = dict(job)
+    keys = _parse_view_keys(views, job)
+
+    with current_job_lock:
+        if current_job_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="別のTポーズ生成/編集が実行中です。しばらく待ってから再試行してください。",
+            )
+        current_job_id = job_id
+
+    thread = threading.Thread(
+        target=_run_upscale, args=(job_id, keys, int(target)), daemon=True
+    )
+    thread.start()
+    return {"job_id": job_id, "views": keys, "status": "upscaling", "target": target}
 
 
 @router.post("/jobs/{job_id}/undo")
@@ -830,6 +1039,7 @@ async def undo_views(job_id: str, views: str = Form("")):
         shutil.copy2(prev, os.path.join(job_dir, f"{key}.png"))
         os.remove(prev)
         _bump_view_rev(job_id, key)
+        _clear_upscaled(job_id, job_dir, key)
         restored.append(key)
     if not restored:
         raise HTTPException(status_code=409, detail="取り消せる編集がありません。")

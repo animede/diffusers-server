@@ -2635,7 +2635,13 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   const editInput = document.getElementById("tp-edit-input");
   const editSeed = document.getElementById("tp-edit-seed");
   const editKeepPose = document.getElementById("tp-edit-keeppose");
+  const editUseRef = document.getElementById("tp-edit-useref");
+  const editBtn = document.getElementById("tp-edit-btn");
   const editAllBtn = document.getElementById("tp-edit-all-btn");
+  const editViewsEl = document.getElementById("tp-edit-view-checkboxes");
+  const editSelectAllBtn = document.getElementById("tp-edit-select-all-btn");
+  const editSelectNoneBtn = document.getElementById("tp-edit-select-none-btn");
+  const upscaleBtn = document.getElementById("tp-upscale-btn");
   const undoBtn = document.getElementById("tp-undo-btn");
   const editError = document.getElementById("tp-edit-error");
   const palmsInput = document.getElementById("tp-palms-input");
@@ -2643,6 +2649,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   const tailPreset = document.getElementById("tp-tail-preset");
   const tailInput = document.getElementById("tp-tail-input");
   const bodyInput = document.getElementById("tp-body-input");
+  const costumeInput = document.getElementById("tp-costume-input");
   const bodyPreset = document.getElementById("tp-body-preset");
   const extraInput = document.getElementById("tp-extra-input");
   const generateBtn = document.getElementById("tp-generate-btn");
@@ -2715,7 +2722,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   const tpTiles = new Map();  // key -> {tile, wrap, img, spinner, label, status, dl, dlNobg, actions}
   const TP_STATUS_TEXT = {
     queued: "待機中", running: "生成中", recoloring: "色調整中",
-    editing: "編集中", done: "完了", error: "エラー",
+    editing: "編集中", upscaling: "拡大中", done: "完了", error: "エラー",
   };
 
   function tpCreateTile(v) {
@@ -2755,6 +2762,16 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     dlNobg.textContent = "背景透過版をダウンロード";
     dlNobg.style.display = "none";
     tile.appendChild(dlNobg);
+    const dlUp = document.createElement("a");
+    dlUp.className = "view-tile-download";
+    dlUp.setAttribute("download", "");
+    dlUp.style.display = "none";
+    tile.appendChild(dlUp);
+    const dlUpNobg = document.createElement("a");
+    dlUpNobg.className = "view-tile-download";
+    dlUpNobg.setAttribute("download", "");
+    dlUpNobg.style.display = "none";
+    tile.appendChild(dlUpNobg);
     const actions = document.createElement("div");
     actions.className = "view-tile-actions";
     actions.style.display = "none";
@@ -2773,12 +2790,14 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     actions.appendChild(undoOne);
     tile.appendChild(actions);
     viewsGrid.appendChild(tile);
-    const entry = { tile, img, spinner, status, dl, dlNobg, actions, undoOne, rev: -1 };
+    const entry = { tile, img, spinner, status, dl, dlNobg, dlUp, dlUpNobg,
+                    actions, undoOne, rev: -1 };
     tpTiles.set(v.key, entry);
     return entry;
   }
 
   function renderViews(views) {
+    tpSyncEditViewChoices(views);
     for (const v of views) {
       const t = tpTiles.get(v.key) || tpCreateTile(v);
       t.status.textContent = TP_STATUS_TEXT[v.status] || v.status;
@@ -2802,6 +2821,20 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
       } else {
         t.dlNobg.style.display = "none";
       }
+      if (v.up_download_url) {
+        t.dlUp.href = v.up_download_url;
+        t.dlUp.textContent = `${v.up_size || "2048"} 版をダウンロード`;
+        t.dlUp.style.display = "block";
+      } else {
+        t.dlUp.style.display = "none";
+      }
+      if (v.up_nobg_download_url) {
+        t.dlUpNobg.href = v.up_nobg_download_url;
+        t.dlUpNobg.textContent = `${v.up_size || "2048"} 透過版をダウンロード`;
+        t.dlUpNobg.style.display = "block";
+      } else {
+        t.dlUpNobg.style.display = "none";
+      }
       t.actions.style.display = v.status === "done" ? "flex" : "none";
       t.undoOne.style.display = v.has_prev ? "inline-block" : "none";
     }
@@ -2818,6 +2851,38 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   function tpResetTiles() {
     for (const [, t] of tpTiles) t.tile.remove();
     tpTiles.clear();
+    editViewsEl.innerHTML = "";
+    editViewKeys = "";
+  }
+
+  // --- 編集の対象ビュー選択(生成したビューのぶんだけチェックボックスを作る) ---
+  // ジョブのビュー構成が変わったときだけ作り直す(毎回作り直すとポーリングのたびに
+  // チェック状態がリセットされてしまうため)。
+  let editViewKeys = "";
+
+  function tpSyncEditViewChoices(views) {
+    const signature = views.map((v) => v.key).join(",");
+    if (signature === editViewKeys) return;
+    editViewKeys = signature;
+    editViewsEl.innerHTML = "";
+    for (const v of views) {
+      const label = document.createElement("label");
+      label.style.fontWeight = "normal";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = true;
+      cb.value = v.key;
+      cb.className = "tp-edit-view-cb";
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(` ${v.label_ja}`));
+      editViewsEl.appendChild(label);
+    }
+  }
+
+  function tpSelectedEditViews() {
+    return Array.from(document.querySelectorAll(".tp-edit-view-cb"))
+      .filter((cb) => cb.checked)
+      .map((cb) => cb.value);
   }
 
   // --- 生成後の編集(何度でも適用できる汎用Edit)。/edit と /undo を叩く ---
@@ -2835,9 +2900,10 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     fd.append("prompt", instruction);
     fd.append("seed", editSeed.value || "0");
     fd.append("keep_pose", editKeepPose.checked ? "true" : "false");
+    fd.append("use_reference", editUseRef && editUseRef.checked ? "true" : "false");
     if (keys && keys.length) fd.append("views", keys.join(","));
     busy = true;
-    editAllBtn.disabled = true;
+    tpSetEditButtonsDisabled(true);
     showStatus("編集中...");
     try {
       const resp = await fetch(`/api/tpose/jobs/${currentJobId}/edit`, { method: "POST", body: fd });
@@ -2849,7 +2915,39 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
       pollJob(currentJobId);
     } catch (err) {
       busy = false;
-      editAllBtn.disabled = false;
+      tpSetEditButtonsDisabled(false);
+      showStatus("");
+      showEditError(err.message);
+    }
+  }
+
+  function tpSetEditButtonsDisabled(disabled) {
+    editBtn.disabled = disabled;
+    editAllBtn.disabled = disabled;
+    if (upscaleBtn) upscaleBtn.disabled = disabled;
+  }
+
+  // --- 2048アップスケール(Real-ESRGAN x2。内容は書き換わらない) ---
+  async function applyUpscale(keys) {
+    if (!currentJobId || busy) return;
+    showEditError("");
+    const fd = new FormData();
+    if (keys && keys.length) fd.append("views", keys.join(","));
+    busy = true;
+    tpSetEditButtonsDisabled(true);
+    showStatus("2048へアップスケール中...");
+    try {
+      const resp = await fetch(`/api/tpose/jobs/${currentJobId}/upscale`, {
+        method: "POST", body: fd });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+      pollTimer = setInterval(() => pollJob(currentJobId), 1500);
+      pollJob(currentJobId);
+    } catch (err) {
+      busy = false;
+      tpSetEditButtonsDisabled(false);
       showStatus("");
       showEditError(err.message);
     }
@@ -2872,8 +2970,32 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     }
   }
 
+  // 「選択したビューに適用」は対象ビューのチェックボックスに従う。
+  // 「全ビューに適用」は選択状態に関わらず全ビュー(サーバ側で views 省略 = 全部)。
+  editBtn.addEventListener("click", () => {
+    const keys = tpSelectedEditViews();
+    if (!keys.length) { showEditError("対象ビューを1つ以上選んでください"); return; }
+    applyEdit(keys);
+  });
   editAllBtn.addEventListener("click", () => applyEdit([]));
-  undoBtn.addEventListener("click", () => applyUndo([]));
+  undoBtn.addEventListener("click", () => {
+    const keys = tpSelectedEditViews();
+    if (!keys.length) { showEditError("対象ビューを1つ以上選んでください"); return; }
+    applyUndo(keys);
+  });
+  if (upscaleBtn) {
+    upscaleBtn.addEventListener("click", () => {
+      const keys = tpSelectedEditViews();
+      if (!keys.length) { showEditError("対象ビューを1つ以上選んでください"); return; }
+      applyUpscale(keys);
+    });
+  }
+  editSelectAllBtn.addEventListener("click", () => {
+    document.querySelectorAll(".tp-edit-view-cb").forEach((cb) => { cb.checked = true; });
+  });
+  editSelectNoneBtn.addEventListener("click", () => {
+    document.querySelectorAll(".tp-edit-view-cb").forEach((cb) => { cb.checked = false; });
+  });
 
   async function pollJob(jobId) {
     try {
@@ -2883,12 +3005,17 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
       currentJobId = job.job_id;
       renderViews(job.views);
       if (job.edit_error) showEditError("編集エラー: " + job.edit_error);
+      if (job.upscale_error) showEditError("アップスケールエラー: " + job.upscale_error);
       if (job.zip_url) {
         zipLink.href = job.zip_url;
         zipRow.classList.remove("hidden");
       }
       if (job.status === "editing") {
         showStatus("編集中...");
+        return;
+      }
+      if (job.status === "upscaling") {
+        showStatus("2048へアップスケール中...");
         return;
       }
       if (job.status === "removing_bg") {
@@ -2909,7 +3036,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
       pollTimer = null;
       busy = false;
       generateBtn.disabled = false;
-      editAllBtn.disabled = false;
+      tpSetEditButtonsDisabled(false);
       editBox.classList.remove("hidden");
       progressWrap.classList.add("hidden");
       if (job.status === "done") {
@@ -2953,6 +3080,10 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     // 自由記述があればプリセットより優先
     const bodyValue = (bodyInput.value || "").trim() || bodyPreset.value || "";
     if (bodyValue) fd.append("body", bodyValue);
+    // 衣装の背面の見え方(背面ビューにのみ効く)
+    if (costumeInput && (costumeInput.value || "").trim()) {
+      fd.append("costume", costumeInput.value.trim());
+    }
     if ((extraInput.value || "").trim()) fd.append("extra_prompt", extraInput.value.trim());
     if (tailRefInput && tailRefInput.files && tailRefInput.files.length > 0) {
       fd.append("tail_ref", tailRefInput.files[0]);
