@@ -1584,6 +1584,7 @@ Content-Type: `multipart/form-data`。
 | `body` | string | 任意 | `""` | 体型の自由記述(例 `short stubby legs and a large head`)。**脚が伸びる劣化への主要な対処**。1段目(元画像からポーズを変える段)のプロンプトにのみ入る |
 | `extra_prompt` | string | 任意 | `""` | プロンプト末尾への追記 |
 | `recolor` | string | 任意 | `""` | 生成後に色を調整する**2パス目のEdit指示**(空なら実行しない)。例 `Make the fur a warmer cream tone with richer shading`。全ビューへ同じ指示を適用し、正面は調整後の画像を後続ビューの参照に使う(色をビュー間で揃えるため)。生成回数が2倍になる |
+| `bg_method` | string | 任意 | `"anime"` | 背景除去の方式(`anime`=アニメ・キャラクター向け / `rembg`=汎用)。Tポーズは被写体がキャラクターのため既定を `anime` にしている(淡い色の毛の取りこぼしが実測 27,232px → 13,733px) |
 | `remove_bg` | bool | 任意 | `false` | 背景除去(rembg / isnet-general-use)。各ビューの背景透過版 `<key>_nobg.png`(RGBA)を併産する(白背景版はそのまま残る)。生成後・GPUロック解放後にCPUで処理するためGPU待ちなし(1枚1秒前後) |
 
 **レスポンス例**: `{ "job_id": "d3e3ee58a29c" }`
@@ -1743,12 +1744,13 @@ Edit後に作り直す**。ZIPも再生成される。編集の失敗はジョ�
 
 ### POST /api/remove_bg
 
-背景削除(rembg / isnet-general-use、GPU不使用・排他不要)。Content-Type: `multipart/form-data`。
-charsheetの`remove_bg`と同一実装(`apps/charsheet/bg.py`)を再利用。
+背景削除(GPU不使用・排他不要)。Content-Type: `multipart/form-data`。
+実装は `core/bg.py`(charsheet / Tポーズと共通)。
 
 | 名前 | 型 | 必須/任意 | 説明 |
 |---|---|---|---|
 | `image` | file | 必須 | 入力画像(内部で`RGBA`変換) |
+| `method` | string | 任意(既定 `rembg`) | `rembg`=汎用(rembg / isnet-general-use)/ `anime`=アニメ・キャラクター向け(SkyTNT/anime-segmentation の ISNet、`skytnt/anime-seg` の `isnetis.onnx`、Apache-2.0)。未知の値は既定へフォールバック。レスポンスに実際に使った `method` を含む |
 
 **レスポンス例**
 

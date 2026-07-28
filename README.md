@@ -21,7 +21,7 @@ VRAM に同時常駐できないモデル同士は自動でアンロード(排�
 - **Edit(参照画像編集)** — Qwen-Image-Edit-Plus(2511)/ JoyAI-Edit-Plus(複数参照画像合成)
 - **ControlNet**(Canny 等)、**Inpaint**(マスク指定領域の再生成)
 - **Layered**(RGBA レイヤー分解生成)
-- **背景削除**(`rembg` ベース、独立タブ + 各結果パネルへのインスタントボタン)
+- **背景削除**(rembg / anime-segmentation を選択可、独立タブ + 各結果パネルへのインスタントボタン)
 - **キャラクターシート生成**(1枚の画像から8方向のキャラクター画像を自動生成)
 - **動画生成(LTX-2.3)** — Text-to-Video / Image-to-Video / First-Last-Frame 補間 /
   リップシンク(Image+Audio-to-Video)/ 任意キーフレーム条件付け / Video-to-Audio /
@@ -186,7 +186,7 @@ Mage-Flow を使う場合はラッパーサービスも起動します(別プロ
 | `POST /api/edit` | Qwen-Image-Edit-Plus によるマルチ参照画像編集 |
 | `POST /api/controlnet` / `/api/inpaint` | ControlNet(Canny等)/ Inpainting |
 | `POST /api/layered` | RGBAレイヤー分解生成 |
-| `POST /api/remove_bg` | 背景除去(rembg) |
+| `POST /api/remove_bg` | 背景除去(`method` で rembg / anime-segmentation を選択。2026-07-28追加) |
 | `POST /api/flux2/t2i` / `/api/flux2/i2i` | FLUX.2-dev |
 | `POST /api/zimage/t2i` / `/api/zimage/i2i` / `/api/zimage/inpaint` | Z-Image-Turbo |
 | `POST /api/ltx2/t2v` / `/i2v` / `/flf` / `/ia2v` / `/keyframes` / `/v2a` / `/iclora` | LTX-2.3 動画生成(各種条件付け・音声・編集モード) |

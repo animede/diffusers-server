@@ -474,9 +474,13 @@
   <section class="panel tab-panel" id="tab-removebg">
     <h2>背景削除: 画像から背景を除去(透過PNG)</h2>
     <p class="panel-note">
-      rembg(isnet-general-use、ONNX、GPU不使用)で背景を除去し、被写体のみを残した
-      RGBA(透過)PNGを生成します。生成ロックとは無関係のため、他の生成中でも実行できます。
-      初回実行時のみモデル(約179MB)を自動ダウンロードします。
+      背景を除去して被写体のみを残した RGBA(透過)PNGを生成します。GPU不使用・生成ロックとは
+      無関係なので、他の生成中でも実行できます。方式は2つから選べます:
+      <strong>汎用(rembg / isnet-general-use)</strong>と
+      <strong>アニメ・キャラクター向け(anime-segmentation / ISNet、Apache-2.0)</strong>。
+      淡い色の毛や髪はアニメ向けの方が取りこぼしが少ないです(実測: ぬいぐるみの白い毛で
+      取りこぼし 27,232px → 13,733px)。初回実行時のみモデル(約179MB / 約176MB)を
+      自動ダウンロードします。
     </p>
     <div class="gen-layout">
       <div class="gen-col-left">
@@ -485,6 +489,12 @@
             <input type="file" name="image" id="removebg-image-input" accept="image/*" required>
           </label>
           <img id="removebg-input-preview" class="control-preview hidden" alt="入力画像プレビュー">
+          <label>方式
+            <select id="removebg-method-input" name="method">
+              <option value="rembg" selected>汎用(rembg / isnet-general-use)</option>
+              <option value="anime">アニメ・キャラクター向け(anime-segmentation)</option>
+            </select>
+          </label>
           <button type="submit" class="primary-btn">背景削除を実行</button>
         </form>
         <p class="form-error hidden" id="removebg-error"></p>
@@ -558,6 +568,13 @@
       <div class="gen-col-right">
         <div id="cs-views-panel">
           <h3>2. 8方向ビュー</h3>
+          <p class="form-hint" style="margin-top:0;">
+            各タイルの「背景削除」で使う方式:
+            <select id="cs-bgmethod-input" style="font-size:12px; padding:2px 6px;">
+              <option value="anime" selected>アニメ・キャラクター向け(anime-segmentation)</option>
+              <option value="rembg">汎用(rembg / isnet-general-use)</option>
+            </select>
+          </p>
           <div id="cs-views-grid" class="views-grid"></div>
         </div>
 
@@ -732,6 +749,12 @@
           <label class="checkbox-row">
             <input type="checkbox" id="tp-removebg-input">
             背景を削除した透過PNG(<code>_nobg.png</code>)も生成する
+          </label>
+          <label>背景削除の方式
+            <select id="tp-bgmethod-input">
+              <option value="anime" selected>アニメ・キャラクター向け(anime-segmentation)</option>
+              <option value="rembg">汎用(rembg / isnet-general-use)</option>
+            </select>
           </label>
           <p class="form-hint">
             rembg(isnet-general-use)で切り抜きます。白背景版はそのまま残るので、

@@ -7,6 +7,11 @@ rembg パッケージ(isnet-general-use, ONNX)を使用する。
 モデルは遅延ロードのシングルトン(初回のみ ~179MB を ~/.u2net にダウンロード)。
 rembg は comfy-env(venv の親環境)に既存で、venv からも import 可能なことを確認済み
 (pip install はしない、REBUILD_PLAN §3.4)。
+
+2026-07-28: 方式を選択できるようにするため、**汎用の入口は `core.bg.remove_background`
+(method="rembg" | "anime")へ移した**。このモジュールは rembg 方式の実装本体
+(`remove_background_rembg`)を提供する。既存の呼び出し互換のため
+`remove_background`(= rembg 方式)も残してある。
 """
 import threading
 
@@ -29,9 +34,14 @@ def _get_session():
     return _session
 
 
-def remove_background(img: Image.Image) -> Image.Image:
-    """背景を除去して RGBA(背景透過)画像を返す。"""
+def remove_background_rembg(img: Image.Image) -> Image.Image:
+    """rembg / isnet-general-use で背景を除去して RGBA(背景透過)画像を返す。"""
     from rembg import remove
 
     result = remove(img.convert("RGB"), session=_get_session())
     return result.convert("RGBA")
+
+
+def remove_background(img: Image.Image) -> Image.Image:
+    """後方互換の別名(rembg 方式)。方式を選ぶ場合は core.bg.remove_background を使う。"""
+    return remove_background_rembg(img)

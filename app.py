@@ -34,9 +34,9 @@ import families.z_image as z_image  # noqa: F401  (import 副作用で registry 
 import families.ltx2 as ltx2  # noqa: F401  (import 副作用で registry に登録)
 import families.joyai as joyai  # noqa: F401  (import 副作用で registry に登録)
 from apps.charsheet import router as charsheet_router
-from apps.charsheet.bg import remove_background
 from apps.scene_angles import router as scene_angles_router
 from apps.tpose import router as tpose_router
+from core import bg as bg_mod
 from core import llm, progress as progress_mod
 from core.registry import registry
 
@@ -553,16 +553,22 @@ async def make_canny(
 # GPU の generation_lock は使わない(画像生成とは無関係の CPU/ONNX 処理のため、
 # core.llm と同様に GPU 処理中でも並行して呼べる)。
 @app.post("/api/remove_bg")
-async def api_remove_bg(image: UploadFile = File(...)):
+async def api_remove_bg(
+    image: UploadFile = File(...),
+    method: str = Form(bg_mod.DEFAULT_BG_METHOD),
+):
+    """背景除去。`method` で方式を選ぶ(`rembg`=汎用 / `anime`=アニメ・キャラクター向け、
+    core/bg.py 参照)。未知の値は既定へフォールバックする。"""
     contents = await image.read()
     try:
         src = _open_upload_image(contents, "RGBA")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"画像の読み込みに失敗しました: {exc}")
 
+    used = bg_mod.resolve_method(method)
     t0 = time.time()
     try:
-        out_image = remove_background(src)
+        out_image = bg_mod.remove_background(src, method=used)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"背景削除に失敗しました: {exc}")
     elapsed = time.time() - t0
@@ -570,7 +576,8 @@ async def api_remove_bg(image: UploadFile = File(...)):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_name = f"removebg_{ts}_{uuid.uuid4().hex[:8]}.png"
     out_image.save(os.path.join(OUTPUTS_DIR, out_name))
-    return {"mode": "remove_bg", "image_url": f"/outputs/{out_name}", "elapsed_s": elapsed}
+    return {"mode": "remove_bg", "image_url": f"/outputs/{out_name}",
+            "elapsed_s": elapsed, "method": used}
 
 
 # ============================================================================

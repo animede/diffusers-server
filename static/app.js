@@ -1965,7 +1965,11 @@ document.getElementById("removebg-form").addEventListener("submit", async (ev) =
       const resp = await fetch(`/api/charsheet/jobs/${currentJobId}/remove_bg`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key }),
+        // method は背景除去の方式(core/bg.py)。UIのセレクトから取る(既定はアニメ向け)
+        body: JSON.stringify({
+          key,
+          method: (document.getElementById("cs-bgmethod-input") || {}).value || "anime",
+        }),
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
@@ -2937,6 +2941,8 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     fd.append("seed", seedInput.value || "0");
     fd.append("subject", subjectInput.value);
     if (removeBgInput.checked) fd.append("remove_bg", "true");
+    // 背景除去の方式(core/bg.py)。Tポーズはキャラクターが対象なので既定はアニメ向け
+    fd.append("bg_method", (document.getElementById("tp-bgmethod-input") || {}).value || "anime");
     fd.append("palms", palmsInput.value);
     fd.append("paw_pads", pawPadsInput.value || "auto");
     fd.append("claws", clawsInput.value);

@@ -267,7 +267,7 @@ def _cutout_rgba(src_rgb: Image.Image, rembg_rgba: Image.Image) -> Image.Image:
     return out
 
 
-def _remove_bg_pass(job_id: str, job_dir: str, keys: list) -> None:
+def _remove_bg_pass(job_id: str, job_dir: str, keys: list, method: str = "rembg") -> None:
     """生成済み各ビューの背景を除去し `<key>_nobg.png`(RGBA)として保存する。
 
     白背景版(`<key>.png`)は残す(3Dツール側が白背景を前提にする場合や、
@@ -275,7 +275,9 @@ def _remove_bg_pass(job_id: str, job_dir: str, keys: list) -> None:
     解放した後に**呼ぶこと(呼び出し側 `_run_job` がそうしている)。
     1枚失敗しても他のビューの処理は続ける(部分的な成功を許容する)。
     """
-    from apps.charsheet.bg import remove_background
+    from core.bg import remove_background, resolve_method
+
+    method = resolve_method(method)
 
     for key in keys:
         src = os.path.join(job_dir, f"{key}.png")
@@ -284,7 +286,7 @@ def _remove_bg_pass(job_id: str, job_dir: str, keys: list) -> None:
         try:
             with Image.open(src) as im:
                 src_rgb = im.convert("RGB")
-                rgba = _cutout_rgba(src_rgb, remove_background(src_rgb))
+                rgba = _cutout_rgba(src_rgb, remove_background(src_rgb, method=method))
             rgba.save(os.path.join(job_dir, f"{key}_nobg.png"))
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
@@ -437,7 +439,7 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
                 generate_mod.release_generation_lock()
                 got_lock = False
             _update_job(job_id, status="removing_bg")
-            _remove_bg_pass(job_id, job_dir, keys)
+            _remove_bg_pass(job_id, job_dir, keys, params.get("bg_method", "anime"))
 
         zip_path = _build_zip(job_dir, keys)
         _update_job(
@@ -473,6 +475,7 @@ async def generate(
     extra_prompt: str = Form(""),
     recolor: str = Form(""),
     remove_bg: bool = Form(False),
+    bg_method: str = Form("anime"),
 ):
     """Tポーズ4ビュー生成ジョブを開始する。
 
@@ -509,6 +512,9 @@ async def generate(
       適用し、正面は調整後の画像を後続ビューの参照に使う(色をビュー間で揃えるため)。
       1ビューあたり生成が2回になる(所要時間はおよそ2倍)。**強い指示は同一性も動かす**
       (実測で毛色が黄褐色へ寄り爪が戻った例あり、apps/tpose/prompts.py参照)
+    - bg_method: 背景除去の方式(既定 `anime`=アニメ・キャラクター向け /
+      `rembg`=汎用。core/bg.py 参照)。Tポーズの被写体はキャラクターなので既定を
+      `anime` にしている(淡い色の毛や髪の取りこぼしが少ない: 実測 27,232px → 13,733px)
     - remove_bg: 背景除去(rembg / isnet-general-use)。true なら各ビューの背景透過版
       `<key>_nobg.png`(RGBA)を併せて生成する(白背景版はそのまま残す)。
       生成完了後・GPUロック解放後にCPUで処理するため、GPU待ちは発生しない
@@ -564,6 +570,7 @@ async def generate(
 
     params = {
         "remove_bg": bool(remove_bg),
+        "bg_method": bg_method,
         "recolor": recolor,
         "subject": subject,
         "palms": palms,
@@ -742,7 +749,8 @@ def _run_edit(job_id: str, keys: list, instruction: str, seed: int, keep_pose: b
                 generate_mod.release_generation_lock()
                 got_lock = False
             _update_job(job_id, status="removing_bg")
-            _remove_bg_pass(job_id, job_dir, nobg_keys)
+            _remove_bg_pass(job_id, job_dir, nobg_keys,
+                            (jobs[job_id].get("params") or {}).get("bg_method", "anime"))
 
         _build_zip(job_dir, [v["key"] for v in jobs[job_id]["views"]])
         _refresh_has_prev(job_id, job_dir)
@@ -829,7 +837,8 @@ async def undo_views(job_id: str, views: str = Form("")):
     nobg_keys = [k for k in restored
                  if os.path.exists(os.path.join(job_dir, f"{k}_nobg.png"))]
     if nobg_keys:
-        _remove_bg_pass(job_id, job_dir, nobg_keys)
+        _remove_bg_pass(job_id, job_dir, nobg_keys,
+                        (job.get("params") or {}).get("bg_method", "anime"))
     _build_zip(job_dir, [v["key"] for v in job["views"]])
     _refresh_has_prev(job_id, job_dir)
     return {"job_id": job_id, "restored": restored}

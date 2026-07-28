@@ -453,8 +453,11 @@ def _run_refine(job_id: str, key: str, instruction: str, seed: int):
             current_job_id = None
 
 
-def _run_remove_bg(job_id: str, keys: list):
-    """背景削除をバックグラウンドで実行する(keys は方向キーのリスト)。GPU不使用。"""
+def _run_remove_bg(job_id: str, keys: list, method: str = "rembg"):
+    """背景削除をバックグラウンドで実行する(keys は方向キーのリスト)。GPU不使用。
+
+    method: core/bg.py の方式("rembg" / "anime")。
+    """
     global current_job_id
     job_dir = _job_dir(job_id)
     try:
@@ -468,7 +471,9 @@ def _run_remove_bg(job_id: str, keys: list):
             try:
                 # 実行前にバックアップ(refine と同じ1世代仕組み)
                 shutil.copy2(img_path, os.path.join(job_dir, f"{key}_prev.png"))
-                out = bg.remove_background(Image.open(img_path))
+                from core import bg as core_bg
+
+                out = core_bg.remove_background(Image.open(img_path), method=method)
                 out.save(img_path)
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
@@ -505,6 +510,8 @@ class UndoRequest(BaseModel):
 
 class RemoveBgRequest(BaseModel):
     key: str  # 方向キー または "all"
+    # 背景除去の方式(core/bg.py): "rembg"(既定、汎用)| "anime"(アニメ・キャラクター向け)
+    method: str = "rembg"
 
 
 @router.post("/jobs/{job_id}/refine")
@@ -567,7 +574,9 @@ async def remove_bg(job_id: str, req: RemoveBgRequest):
             raise HTTPException(status_code=409, detail="別の処理が実行中です。しばらく待ってから再試行してください。")
         current_job_id = job_id
 
-    thread = threading.Thread(target=_run_remove_bg, args=(job_id, existing), daemon=True)
+    thread = threading.Thread(
+        target=_run_remove_bg, args=(job_id, existing, req.method), daemon=True
+    )
     thread.start()
 
     return {"job_id": job_id, "keys": existing, "status": "removing_bg"}
