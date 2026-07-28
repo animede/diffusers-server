@@ -108,6 +108,10 @@ def _init_job(job_id: str, seed: int, views: list, params: dict):
             "nobg_url": None,
             "nobg_download_url": None,
             "has_prev": False,
+            # rev: この画像が書き換わった回数。UIは rev が変わったときだけ画像を
+            # 再読み込みする(毎回キャッシュバスターを付けるとポーリングのたびに
+            # 再取得されて表示がフラッシュするため。ユーザー報告 2026-07-28)
+            "rev": 0,
             "prompt": None,
         }
         for v in views
@@ -138,6 +142,18 @@ def _update_view(job_id: str, key: str, **kwargs):
         for v in jobs[job_id]["views"]:
             if v["key"] == key:
                 v.update(kwargs)
+                break
+
+
+def _bump_view_rev(job_id: str, key: str) -> None:
+    """ビュー画像が書き換わったことを UI へ知らせる(rev をインクリメント)。"""
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return
+        for v in job["views"]:
+            if v["key"] == key:
+                v["rev"] = int(v.get("rev", 0)) + 1
                 break
 
 
@@ -368,6 +384,7 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
                 )
                 out_path = os.path.join(job_dir, f"{key}.png")
                 _copy_generated_image(meta, out_path)
+                _bump_view_rev(job_id, key)
 
                 # 色調整の2パス目(任意)。1パス目のプロンプト末尾を汚さずに色を
                 # 変えられる(apps/tpose/prompts.py の recolor コメント参照)。
@@ -391,6 +408,7 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
                             },
                         )
                     _copy_generated_image(recolor_meta, out_path)
+                    _bump_view_rev(job_id, key)
 
                 if key == "front":
                     front_image = Image.open(out_path).convert("RGB")
@@ -708,6 +726,7 @@ def _run_edit(job_id: str, keys: list, instruction: str, seed: int, keep_pose: b
                         },
                     )
                 _copy_generated_image(meta, img_path)
+                _bump_view_rev(job_id, key)
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
                 _update_view(job_id, key, status="done")
@@ -802,6 +821,7 @@ async def undo_views(job_id: str, views: str = Form("")):
             continue
         shutil.copy2(prev, os.path.join(job_dir, f"{key}.png"))
         os.remove(prev)
+        _bump_view_rev(job_id, key)
         restored.append(key)
     if not restored:
         raise HTTPException(status_code=409, detail="取り消せる編集がありません。")

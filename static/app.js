@@ -2476,41 +2476,67 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
       checkboxesEl.innerHTML = "<p class='form-error'>アングル一覧の取得に失敗しました</p>";
     });
 
+  // タイルはアングルごとに1回だけ作り、以降は中身を更新する。毎ポーリングで
+  // 作り直して `?t=Date.now()` を付けると**そのたびに画像を再取得して表示が
+  // フラッシュする**(Tポーズタブで同じ問題の報告を受けて修正、2026-07-28)。
+  // シーンアングルの画像は完成後に書き換わらないので、src は一度だけ設定すれば足りる
+  // (ジョブが変わればURLに含まれる job_id が変わるため衝突しない)。
+  const saTiles = new Map();  // key -> {tile, img, spinner, status}
+  const SA_STATUS_TEXT = {
+    queued: "待機中", running: "生成中", done: "完了", error: "エラー",
+  };
+
+  function saCreateTile(v) {
+    const tile = document.createElement("div");
+    tile.className = "view-tile";
+    const wrap = document.createElement("div");
+    wrap.className = "view-tile-image-wrap";
+    const img = document.createElement("img");
+    img.alt = v.label_ja;
+    // style.css の .view-tile-image-wrap img は display:none が既定のため、
+    // 画像を入れたときに明示的に block にする(charsheetタブと同じ理由)。
+    img.style.display = "none";
+    wrap.appendChild(img);
+    const spinner = document.createElement("div");
+    spinner.className = "spinner";
+    spinner.style.display = "none";
+    wrap.appendChild(spinner);
+    tile.appendChild(wrap);
+    const label = document.createElement("div");
+    label.className = "view-tile-label";
+    label.innerHTML = `<span class="ja">${v.label_ja}</span> <span class="en">${v.label_en}</span>`;
+    tile.appendChild(label);
+    const status = document.createElement("div");
+    status.className = "view-tile-status";
+    tile.appendChild(status);
+    viewsGrid.appendChild(tile);
+    const entry = { tile, img, spinner, status };
+    saTiles.set(v.key, entry);
+    return entry;
+  }
+
   function renderViews(views) {
-    viewsGrid.innerHTML = "";
-    const statusText = {
-      queued: "待機中", running: "生成中", done: "完了", error: "エラー",
-    };
     for (const v of views) {
-      const tile = document.createElement("div");
-      tile.className = "view-tile";
-      const wrap = document.createElement("div");
-      wrap.className = "view-tile-image-wrap";
-      if (v.status === "done" && v.url) {
-        const img = document.createElement("img");
-        img.src = v.url + "?t=" + Date.now();
-        img.alt = v.label_ja;
-        // style.css の .view-tile-image-wrap img は display:none が既定のため、
-        // 明示的に block にしないとタイルが空のまま見える(charsheetタブは
-        // 読み込み完了時に自前で block へ切り替えている)。
-        img.style.display = "block";
-        wrap.appendChild(img);
-      } else if (v.status === "running") {
-        const spinner = document.createElement("div");
-        spinner.className = "spinner";
-        wrap.appendChild(spinner);
+      const t = saTiles.get(v.key) || saCreateTile(v);
+      t.status.textContent = SA_STATUS_TEXT[v.status] || v.status;
+      t.spinner.style.display = v.status === "running" ? "block" : "none";
+      if (v.status === "done" && v.url && !t.img.getAttribute("src")) {
+        t.img.src = v.url;
+        t.img.style.display = "block";
       }
-      tile.appendChild(wrap);
-      const label = document.createElement("div");
-      label.className = "view-tile-label";
-      label.innerHTML = `<span class="ja">${v.label_ja}</span> <span class="en">${v.label_en}</span>`;
-      tile.appendChild(label);
-      const st = document.createElement("div");
-      st.className = "view-tile-status";
-      st.textContent = statusText[v.status] || v.status;
-      tile.appendChild(st);
-      viewsGrid.appendChild(tile);
     }
+    const keys = new Set(views.map((v) => v.key));
+    for (const [key, t] of saTiles) {
+      if (!keys.has(key)) {
+        t.tile.remove();
+        saTiles.delete(key);
+      }
+    }
+  }
+
+  function saResetTiles() {
+    for (const [, t] of saTiles) t.tile.remove();
+    saTiles.clear();
   }
 
   async function pollJob(jobId) {
@@ -2572,6 +2598,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
         throw new Error(err.detail || `HTTP ${resp.status}`);
       }
       const data = await resp.json();
+      saResetTiles();  // 新しいジョブなので前回のタイル(画像)を片付ける
       pollTimer = setInterval(() => pollJob(data.job_id), 1500);
       pollJob(data.job_id);
     } catch (err) {
@@ -2677,79 +2704,116 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
       checkboxesEl.innerHTML = "<p class='form-error'>ビュー一覧の取得に失敗しました</p>";
     });
 
+  // タイルはビューごとに1回だけ作り、以降は中身を更新する(タイルを毎回作り直し、
+  // 画像に `?t=Date.now()` を付けるとポーリングのたびに再取得されて**表示が
+  // フラッシュする**。ユーザー報告 2026-07-28)。画像の差し替えはサーバが返す
+  // `rev`(画像が書き換わった回数)が変わったときだけ行う。
+  const tpTiles = new Map();  // key -> {tile, wrap, img, spinner, label, status, dl, dlNobg, actions}
+  const TP_STATUS_TEXT = {
+    queued: "待機中", running: "生成中", recoloring: "色調整中",
+    editing: "編集中", done: "完了", error: "エラー",
+  };
+
+  function tpCreateTile(v) {
+    const tile = document.createElement("div");
+    // view-tile-square: 正方形出力の全身(左右に広げた腕)を切らずに表示する(style.css参照)
+    tile.className = "view-tile view-tile-square";
+    const wrap = document.createElement("div");
+    wrap.className = "view-tile-image-wrap";
+    const img = document.createElement("img");
+    img.alt = v.label_ja;
+    // style.css の .view-tile-image-wrap img は display:none が既定なので、
+    // 画像を入れたときに明示的に block にする(charsheetタブと同じ理由)。
+    img.style.display = "none";
+    wrap.appendChild(img);
+    const spinner = document.createElement("div");
+    spinner.className = "spinner";
+    spinner.style.display = "none";
+    wrap.appendChild(spinner);
+    tile.appendChild(wrap);
+    const label = document.createElement("div");
+    label.className = "view-tile-label";
+    const note = v.for_3d ? "" : " <span class='en'>(参考)</span>";
+    label.innerHTML = `<span class="ja">${v.label_ja}</span> <span class="en">${v.label_en}</span>${note}`;
+    tile.appendChild(label);
+    const status = document.createElement("div");
+    status.className = "view-tile-status";
+    tile.appendChild(status);
+    const dl = document.createElement("a");
+    dl.className = "view-tile-download";
+    dl.setAttribute("download", "");
+    dl.textContent = "この画像をダウンロード";
+    dl.style.display = "none";
+    tile.appendChild(dl);
+    const dlNobg = document.createElement("a");
+    dlNobg.className = "view-tile-download";
+    dlNobg.setAttribute("download", "");
+    dlNobg.textContent = "背景透過版をダウンロード";
+    dlNobg.style.display = "none";
+    tile.appendChild(dlNobg);
+    const actions = document.createElement("div");
+    actions.className = "view-tile-actions";
+    actions.style.display = "none";
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "tiny-btn";
+    editBtn.textContent = "このビューを編集";
+    editBtn.addEventListener("click", () => applyEdit([v.key]));
+    actions.appendChild(editBtn);
+    const undoOne = document.createElement("button");
+    undoOne.type = "button";
+    undoOne.className = "tiny-btn secondary";
+    undoOne.textContent = "取り消す";
+    undoOne.style.display = "none";
+    undoOne.addEventListener("click", () => applyUndo([v.key]));
+    actions.appendChild(undoOne);
+    tile.appendChild(actions);
+    viewsGrid.appendChild(tile);
+    const entry = { tile, img, spinner, status, dl, dlNobg, actions, undoOne, rev: -1 };
+    tpTiles.set(v.key, entry);
+    return entry;
+  }
+
   function renderViews(views) {
-    viewsGrid.innerHTML = "";
-    const statusText = {
-      queued: "待機中", running: "生成中", recoloring: "色調整中",
-      editing: "編集中", done: "完了", error: "エラー",
-    };
     for (const v of views) {
-      const tile = document.createElement("div");
-      // view-tile-square: 正方形出力の全身(左右に広げた腕)を切らずに表示する(style.css参照)
-      tile.className = "view-tile view-tile-square";
-      const wrap = document.createElement("div");
-      wrap.className = "view-tile-image-wrap";
-      if (v.status === "done" && v.url) {
-        const img = document.createElement("img");
-        img.src = v.url + "?t=" + Date.now();
-        img.alt = v.label_ja;
-        // style.css の .view-tile-image-wrap img は display:none が既定
-        // (charsheetタブが読み込み完了時に block へ切り替える前提の指定)。
-        // ここで明示的に block にしないとタイルが空のまま見える。
-        img.style.display = "block";
-        wrap.appendChild(img);
-      } else if (v.status === "running") {
-        const spinner = document.createElement("div");
-        spinner.className = "spinner";
-        wrap.appendChild(spinner);
+      const t = tpTiles.get(v.key) || tpCreateTile(v);
+      t.status.textContent = TP_STATUS_TEXT[v.status] || v.status;
+      t.spinner.style.display =
+        (v.status === "running" || v.status === "recoloring" || v.status === "editing")
+          ? "block" : "none";
+      // 画像は rev が変わったときだけ差し替える(= フラッシュしない)
+      const rev = typeof v.rev === "number" ? v.rev : 0;
+      if (v.url && rev !== t.rev) {
+        t.img.src = v.url + "?v=" + rev;
+        t.img.style.display = "block";
+        t.rev = rev;
       }
-      tile.appendChild(wrap);
-      const label = document.createElement("div");
-      label.className = "view-tile-label";
-      const note = v.for_3d ? "" : " <span class='en'>(参考)</span>";
-      label.innerHTML = `<span class="ja">${v.label_ja}</span> <span class="en">${v.label_en}</span>${note}`;
-      tile.appendChild(label);
-      const st = document.createElement("div");
-      st.className = "view-tile-status";
-      st.textContent = statusText[v.status] || v.status;
-      tile.appendChild(st);
-      if (v.status === "done" && v.download_url) {
-        const dl = document.createElement("a");
-        dl.href = v.download_url;
-        dl.setAttribute("download", "");
-        dl.textContent = "この画像をダウンロード";
-        dl.className = "view-tile-download";
-        tile.appendChild(dl);
+      if (v.download_url) {
+        t.dl.href = v.download_url;
+        t.dl.style.display = v.status === "done" ? "block" : "none";
       }
       if (v.nobg_download_url) {
-        const dl2 = document.createElement("a");
-        dl2.href = v.nobg_download_url;
-        dl2.setAttribute("download", "");
-        dl2.textContent = "背景透過版をダウンロード";
-        dl2.className = "view-tile-download";
-        tile.appendChild(dl2);
+        t.dlNobg.href = v.nobg_download_url;
+        t.dlNobg.style.display = "block";
+      } else {
+        t.dlNobg.style.display = "none";
       }
-      if (v.status === "done") {
-        const actions = document.createElement("div");
-        actions.className = "view-tile-actions";
-        const editBtn = document.createElement("button");
-        editBtn.type = "button";
-        editBtn.className = "tiny-btn";
-        editBtn.textContent = "このビューを編集";
-        editBtn.addEventListener("click", () => applyEdit([v.key]));
-        actions.appendChild(editBtn);
-        if (v.has_prev) {
-          const undoOne = document.createElement("button");
-          undoOne.type = "button";
-          undoOne.className = "tiny-btn secondary";
-          undoOne.textContent = "取り消す";
-          undoOne.addEventListener("click", () => applyUndo([v.key]));
-          actions.appendChild(undoOne);
-        }
-        tile.appendChild(actions);
-      }
-      viewsGrid.appendChild(tile);
+      t.actions.style.display = v.status === "done" ? "flex" : "none";
+      t.undoOne.style.display = v.has_prev ? "inline-block" : "none";
     }
+    // 別ジョブに切り替わったら(このジョブに無いビューの)タイルを片付ける
+    const keys = new Set(views.map((v) => v.key));
+    for (const [key, t] of tpTiles) {
+      if (!keys.has(key)) {
+        t.tile.remove();
+        tpTiles.delete(key);
+      }
+    }
+  }
+
+  function tpResetTiles() {
+    for (const [, t] of tpTiles) t.tile.remove();
+    tpTiles.clear();
   }
 
   // --- 生成後の編集(何度でも適用できる汎用Edit)。/edit と /undo を叩く ---
@@ -2901,6 +2965,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
         throw new Error(err.detail || `HTTP ${resp.status}`);
       }
       const data = await resp.json();
+      tpResetTiles();  // 新しいジョブなので前回のタイル(画像)を片付ける
       pollTimer = setInterval(() => pollJob(data.job_id), 1500);
       pollJob(data.job_id);
     } catch (err) {
