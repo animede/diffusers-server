@@ -359,8 +359,18 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
             key = view["key"]
             # 1段目(元画像からポーズを変える)判定: front、または front 未選択時の最初のビュー
             first_stage = (key == "front" or front_image is None)
+            # 右真横は「左向きで生成して左右反転」する(2026-07-29、ユーザー報告
+            # 「左右が同じ方向」への対処)。モデルには**横顔は左向きという強い
+            # バイアス**があり、右向きを言葉で出させるのは実測で 1/9 しか成功しない
+            # (「画面右を向く」「背中が画面左」「腕が画面右へ伸びる」の3文言 ×
+            # 3seed)。一方、左向きは 3/3 で指示どおりに出る。
+            # そこで**参照画像を鏡像にして左向きを生成し、出力を鏡像に戻す**:
+            # 鏡像キャラの左側面 = 元キャラの右側面なので、**左右非対称の意匠
+            # (髪の分け目・小物の位置)も正しい側に出る**(単純な左右反転コピーとは
+            # 違って情報が失われない)。
+            mirrored = (key == "right")
             prompt = build_prompt(
-                key,
+                "left" if mirrored else key,
                 subject=params.get("subject", "auto"),
                 palms=params["palms"],
                 paw_pads=params["paw_pads"],
@@ -372,7 +382,11 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
                 extra=params["extra_prompt"],
                 first_stage=first_stage,
             )
-            _update_view(job_id, key, status="running", prompt=prompt)
+            if mirrored:
+                prompt_note = prompt + "  ※参照画像を鏡像にして左向きで生成し、出力を左右反転"
+            else:
+                prompt_note = prompt
+            _update_view(job_id, key, status="running", prompt=prompt_note)
 
             if first_stage:
                 # front(または front 未選択時の最初のビュー)は元画像から生成する
@@ -387,6 +401,8 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
                 refs = [front_image, processed]
                 if tail_ref is not None:
                     refs.append(tail_ref)
+            if mirrored:
+                refs = [ImageOps.mirror(r) for r in refs]
 
             try:
                 meta = generate_mod.generate_view(
@@ -405,6 +421,9 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
                 )
                 out_path = os.path.join(job_dir, f"{key}.png")
                 _copy_generated_image(meta, out_path)
+                if mirrored:
+                    with Image.open(out_path) as generated:
+                        ImageOps.mirror(generated.convert("RGB")).save(out_path)
                 _bump_view_rev(job_id, key)
 
                 # 色調整の2パス目(任意)。1パス目のプロンプト末尾を汚さずに色を

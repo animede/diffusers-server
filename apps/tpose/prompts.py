@@ -135,11 +135,14 @@ VIEWS = [
         "label_ja": "左真横",
         "label_en": "Left",
         # 真横は「角度」ではなく**見えるもの**で指定する(下の _SIDE_ARMS_CLAUSE の
-        # コメント参照。「90度回転して」等の角度指定では3/4止まりになる)。
+        # コメント参照)。**視点名(「left side profile view」)は書かない**:
+        # モデルが持つ視点名の解釈と「画面左を向く」という指示が競合し、
+        # 左右が逆になる(実測 1/3 で反転)。向きだけを言うと 3/3 で指示どおりになる。
+        # 幾何: キャラが画面左を向く = 左側面がカメラを向く = このビューの意味と一致。
         "view": (
-            "Show the character in a full body left side profile view, the character "
-            "faces the left edge of the image, the body is seen edge-on and we see "
-            "the complete left side silhouette from head to toe"
+            "Show the character in a full body side profile view, the character is "
+            "turned to face the left edge of the image, the body is seen edge-on and "
+            "we see the complete side silhouette from head to toe"
         ),
         "for_3d": True,
     },
@@ -148,12 +151,16 @@ VIEWS = [
         "label_ja": "右真横",
         "label_en": "Right",
         "view": (
-            "Show the character in a full body right side profile view, the character "
-            "faces the right edge of the image, the body is seen edge-on and we see "
-            "the complete right side silhouette from head to toe"
+            "Show the character in a full body side profile view, the character is "
+            "turned to face the right edge of the image, the body is seen edge-on and "
+            "we see the complete side silhouette from head to toe"
         ),
         "for_3d": True,
     },
+    # **45度ビューの左右は区別できない(既知の制約)**: 現行文言でも、真横で効いた
+    # 「向きだけを言う」書き換え(「45度だけ画面左を向く」)でも、左右で同じ絵が出る
+    # (実測: 頭の水平ずれが cur_L/cur_R とも +28〜29px、書き換え版も +22〜24px)。
+    # for_3d=False の参考出力なので現状は放置している。
     {
         "key": "front_left_45",
         "label_ja": "左前45度",
