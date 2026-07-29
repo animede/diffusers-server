@@ -69,29 +69,34 @@ _T_POSE_CLAUSE_OTHER = f"keeping exactly the same T-pose with {_T_POSE_ARMS}"
 
 # 真横(left / right)ビューの腕の指示。**通常のTポーズ句の代わりに使う**。
 #
-# 経緯(2026-07-29、ユーザー要望「image-3dで横も使えるようになったので真横も生成したい」):
-# 当初は「Tポーズの真横投影は6通りすべてで破綻する(手前腕が胸の上の肉塊になり両脚が
-# 1本に融合する)」と記録して真横を提供していなかった。2段生成(front+元画像の2枚参照)や
-# 語彙整理を経た現行パイプラインで再検証したところ、**破綻は起きなくなった**が、
-# 角度で指定する限り3/4止まりになることが分かった(被写体bboxの幅/高さ比の実測、
-# 真横なら 0.4前後・正面のTポーズは 0.97):
-#   「左側から」「90度回転して」「約75度」等   -> 0.56〜0.84(回り込めていない)
-#   45度画像を経由する段階回転                 -> 0.83〜0.96(むしろ悪化)
-#   **「見えるもの」で指定**(鼻が画面左端を向く /
-#   見える目と耳は片方だけ / 胴体はエッジオン) -> **0.36〜0.46**(真横に到達)
-# ただし「見えるもの」だけだと腕が下りてTポーズが失われるため、腕の見え方も併記する
-# (下記の「腕の描き方の選定」)。
-# **腕の描き方の選定(実測)**: 「手前腕は端面が円として胸に重なる」と書くと投影としては
-# 正しいが、**約半数のseedで端面が別物の球になる**(青い球=オーバーオールの色が乗った /
-# 黒い球 / 紺の毛玉)。「端面は腕と同じ素材・色」と材質まで書いても seed 777 で再発した。
-# 代わりに **「両腕は強く短縮され、肩と胴体の陰にほぼ隠れる」**と書くと、3seed(777/202/303)
-# とも人工物が出ず、腕が自然に短縮された側面像になった(幅/高さ比 0.49〜0.52)。
-# 端面の丸を明示的に描かせないほうが安定する、という結論。
+# 経緯(2026-07-29、ユーザー要望「image-3dで横も使えるようになったので真横も生成したい」→
+# 人物キャラで破綻の報告 → ユーザー判断で腕を前方へ出す方式に決定):
+#
+# (1) **Tポーズのまま真横は描けない**。真横から見たTポーズは手前の腕がカメラを
+#     まっすぐ指す極端な短縮になり、学習データにほぼ存在しない。実測では
+#     **胴体は完璧に真横まで回り込むのに腕だけが壊れる**:
+#       - ぬいぐるみ(腕が短い): 胴体の陰に隠せるので成立(幅/高さ比 0.38〜0.52)
+#       - 人物(腕が長い): **腕が長い管・棒になって画面外へ伸びる**(ユーザー報告の症状)
+#     angles LoRA(charsheet経路)でも同じで、LoRAで綺麗な真横が出るのは
+#     charsheetのプロンプトが "neutral standing pose"(腕を下ろした姿勢)だから。
+#     LoRAを使っても「Tポーズ維持」と書いた瞬間に回り込みが浅くなる(0.59 -> 0.75)。
+# (2) **腕を下ろす**と綺麗な真横になるが、腕が胴体の横に重なって
+#     **胴体の側面シルエットを隠す**(3D再構成で欲しい情報が減る)。
+# (3) そこで**腕を前方へ出す**(ユーザー判断)。極端な短縮が要らず、
+#     胴体の側面も隠れない。実測で人物・ぬいぐるみとも安定
+#     (幅/高さ比 人物 0.47/0.47、ぬいぐるみ 0.51/0.56、破綻なし)。
+#
+# **ゴースト顔の罠**: 視点句に「鼻が画面端を向く / 見える目と耳は片方だけ」と
+# 顔のパーツ語を入れると、アニメ絵の被写体で**巨大な顔・目・耳が背景に湧く**
+# (ユーザー報告のスクリーンショットの症状)。回り込ませるための手がかりは
+# 腕の前方指示が担うので、視点句から顔のパーツ語を外して解消した。
+#
+# 注意: **他ビュー(正面・背面・45度)とは腕の姿勢が異なる**(Tポーズ vs 前方)。
+# 胴体の側面情報を優先するための意図的な仕様(上記(2)の理由)。
 _SIDE_ARMS_CLAUSE = (
-    "the arms stay stretched straight out to the character's own left and right in a "
-    "T-pose, which now points toward and away from the camera, so both arms are "
-    "strongly foreshortened and almost entirely hidden behind the shoulders and the "
-    "torso, and the whole silhouette stays as narrow as the body"
+    "both arms are stretched straight forward in front of the body, parallel to each "
+    "other at shoulder height, held clear of the torso so the complete side silhouette "
+    "of the body stays visible"
 )
 
 _KEEP_CLAUSE = (
@@ -132,9 +137,9 @@ VIEWS = [
         # 真横は「角度」ではなく**見えるもの**で指定する(下の _SIDE_ARMS_CLAUSE の
         # コメント参照。「90度回転して」等の角度指定では3/4止まりになる)。
         "view": (
-            "Show the character exactly from the left side in a full body profile "
-            "view, the nose points to the left edge of the image, only one eye and "
-            "one ear are visible, the body is seen edge-on"
+            "Show the character in a full body left side profile view, the character "
+            "faces the left edge of the image, the body is seen edge-on and we see "
+            "the complete left side silhouette from head to toe"
         ),
         "for_3d": True,
     },
@@ -143,9 +148,9 @@ VIEWS = [
         "label_ja": "右真横",
         "label_en": "Right",
         "view": (
-            "Show the character exactly from the right side in a full body profile "
-            "view, the nose points to the right edge of the image, only one eye and "
-            "one ear are visible, the body is seen edge-on"
+            "Show the character in a full body right side profile view, the character "
+            "faces the right edge of the image, the body is seen edge-on and we see "
+            "the complete right side silhouette from head to toe"
         ),
         "for_3d": True,
     },
