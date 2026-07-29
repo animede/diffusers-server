@@ -9,16 +9,19 @@ charsheet(apps/charsheet/prompts.py)との違い(2026-07-26の実機検証で確
     そのため本アプリの文言は「LoRAトリガー文の一字一句維持」の制約を受けず、
     Tポーズ保持を明示する自由な文言にしてよい(charsheet の VIEWS_LORA が
     "neutral standing A-pose" と書いているのはそのままでは有害)。
-  - **真横(90度)ビューを持たない**。Tポーズの真横投影は「手前の腕がカメラを向いて
-    完全に短縮し胴体を隠す」構図で、通常Edit / angles LoRA / LoRAトリガー文 / JoyAI /
-    2枚参照 / 幾何を明示した指示の6通りすべてで破綻した(手前腕が胸の上の肉塊になり、
-    両脚が1本の柱に融合する)。代わりに 3/4(45度)ビュー2枚を既定に含める。
-    Hunyuan3D-2mv(image-3d)のビュータグは front/left/back/right 限定のため、
-    45度画像を left/right スロットへ入れてはいけない(image-3d 側では front+back のみを
-    マルチビュー入力に使い、45度は参考出力として扱う)。
+  - **真横(left / right)は「見えるもの」で指定する**(2026-07-29追加)。当初は
+    「Tポーズの真横投影は6通りすべてで破綻する(手前腕が胸の上の肉塊になり両脚が
+    1本の柱に融合する)」として提供していなかったが、現行パイプラインでの再検証で
+    破綻は起きなくなった。ただし**角度で指定する限り3/4止まり**で、
+    「鼻が画面端を向く / 見える目と耳は片方だけ / 胴体はエッジオン」+
+    「手前の腕は端面が円として胸に重なる」と**結果を書く**ことで真横に到達する
+    (実測値と失敗例は下記 `_SIDE_ARMS_CLAUSE` のコメント)。
+    45度ビューは引き続き `for_3d: False`(Hunyuan3D-2mv のビュータグは
+    front/left/back/right 限定なので、45度画像を left/right スロットへ入れない)。
 
-生成順序: front を必ず最初に生成し、back / 45度2枚は **生成した front 画像を入力**に
-連鎖生成する(元画像から直接背面化すると綺麗でも帽子・尻尾の造形が前面と食い違う)。
+生成順序: front を必ず最初に生成し、back / 真横2枚 / 45度2枚は
+**生成した front 画像を入力**に連鎖生成する(元画像から直接背面化すると綺麗でも
+帽子・尻尾の造形が前面と食い違う)。
 
 ビュー別に文言を変えている理由(いずれも実機で出た不具合の修正):
   - 背面ビューで手のひらの文言を正面と同じにすると、**背面画像に肉球が描かれる**
@@ -64,6 +67,33 @@ _T_POSE_ARMS = (
 _T_POSE_CLAUSE_FRONT = _T_POSE_ARMS
 _T_POSE_CLAUSE_OTHER = f"keeping exactly the same T-pose with {_T_POSE_ARMS}"
 
+# 真横(left / right)ビューの腕の指示。**通常のTポーズ句の代わりに使う**。
+#
+# 経緯(2026-07-29、ユーザー要望「image-3dで横も使えるようになったので真横も生成したい」):
+# 当初は「Tポーズの真横投影は6通りすべてで破綻する(手前腕が胸の上の肉塊になり両脚が
+# 1本に融合する)」と記録して真横を提供していなかった。2段生成(front+元画像の2枚参照)や
+# 語彙整理を経た現行パイプラインで再検証したところ、**破綻は起きなくなった**が、
+# 角度で指定する限り3/4止まりになることが分かった(被写体bboxの幅/高さ比の実測、
+# 真横なら 0.4前後・正面のTポーズは 0.97):
+#   「左側から」「90度回転して」「約75度」等   -> 0.56〜0.84(回り込めていない)
+#   45度画像を経由する段階回転                 -> 0.83〜0.96(むしろ悪化)
+#   **「見えるもの」で指定**(鼻が画面左端を向く /
+#   見える目と耳は片方だけ / 胴体はエッジオン) -> **0.36〜0.46**(真横に到達)
+# ただし「見えるもの」だけだと腕が下りてTポーズが失われるため、腕の見え方も併記する
+# (下記の「腕の描き方の選定」)。
+# **腕の描き方の選定(実測)**: 「手前腕は端面が円として胸に重なる」と書くと投影としては
+# 正しいが、**約半数のseedで端面が別物の球になる**(青い球=オーバーオールの色が乗った /
+# 黒い球 / 紺の毛玉)。「端面は腕と同じ素材・色」と材質まで書いても seed 777 で再発した。
+# 代わりに **「両腕は強く短縮され、肩と胴体の陰にほぼ隠れる」**と書くと、3seed(777/202/303)
+# とも人工物が出ず、腕が自然に短縮された側面像になった(幅/高さ比 0.49〜0.52)。
+# 端面の丸を明示的に描かせないほうが安定する、という結論。
+_SIDE_ARMS_CLAUSE = (
+    "the arms stay stretched straight out to the character's own left and right in a "
+    "T-pose, which now points toward and away from the camera, so both arms are "
+    "strongly foreshortened and almost entirely hidden behind the shoulders and the "
+    "torso, and the whole silhouette stays as narrow as the body"
+)
+
 _KEEP_CLAUSE = (
     "full body visible from head to toe, plain white background, "
     "keep the character design, costume and colors exactly the same"
@@ -92,6 +122,30 @@ VIEWS = [
             "Show the character from behind in a full body back view, rear facing "
             "the camera, showing all back details of the fur, costume and "
             "accessories from behind"
+        ),
+        "for_3d": True,
+    },
+    {
+        "key": "left",
+        "label_ja": "左真横",
+        "label_en": "Left",
+        # 真横は「角度」ではなく**見えるもの**で指定する(下の _SIDE_ARMS_CLAUSE の
+        # コメント参照。「90度回転して」等の角度指定では3/4止まりになる)。
+        "view": (
+            "Show the character exactly from the left side in a full body profile "
+            "view, the nose points to the left edge of the image, only one eye and "
+            "one ear are visible, the body is seen edge-on"
+        ),
+        "for_3d": True,
+    },
+    {
+        "key": "right",
+        "label_ja": "右真横",
+        "label_en": "Right",
+        "view": (
+            "Show the character exactly from the right side in a full body profile "
+            "view, the nose points to the right edge of the image, only one eye and "
+            "one ear are visible, the body is seen edge-on"
         ),
         "for_3d": True,
     },
@@ -475,9 +529,15 @@ def build_prompt(view_key: str, palms: str = "forward", paw_pads: str = "auto",
                 黒髪化のトリガーになることを実機で確認したため(下記コメント参照)。
     """
     subject_kind = resolve_subject(subject, paw_pads)
-    t_pose = _T_POSE_CLAUSE_FRONT if first_stage else _T_POSE_CLAUSE_OTHER
+    is_side = view_key in ("left", "right")
+    if is_side:
+        # 真横は通常のTポーズ句だと3/4止まりになる。腕の見え方を書いた専用句を使う
+        # (_SIDE_ARMS_CLAUSE のコメント参照)。手のひらは真横では見えないので入れない。
+        t_pose = _SIDE_ARMS_CLAUSE
+    else:
+        t_pose = _T_POSE_CLAUSE_FRONT if first_stage else _T_POSE_CLAUSE_OTHER
     parts = [_view_clause(view_key, subject_kind, first_stage), t_pose]
-    palms_clause = _palms_clause(view_key, palms, paw_pads, subject_kind)
+    palms_clause = "" if is_side else _palms_clause(view_key, palms, paw_pads, subject_kind)
     if palms_clause:
         parts.append(palms_clause)
     parts.append(_KEEP_CLAUSE)
