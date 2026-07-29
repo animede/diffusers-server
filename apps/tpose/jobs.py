@@ -526,7 +526,7 @@ async def generate(
       (テキスト指定 tail を推奨)
     - seed: 乱数シード(任意、既定0=ビューごとにランダム)
     - views: カンマ区切りのビューID(任意。省略=4ビュー全部)。
-      有効ID: front / back / front_left_45 / front_right_45
+      有効ID: front / back / left / right / front_left_45
     - subject: 被写体タイプ。"auto"(既定、動物/人間どちらの語彙も使わない中立)|
       "animal"(毛皮・肉球のある動物やぬいぐるみ)| "human"(人物・リアルな人形)。
       **リアルな人形で背面が動物化する/手に肉球が付く場合は "human" を指定する**

@@ -1563,8 +1563,9 @@ aerial / low_angle / 45度系は高品質で成立するが、**90度回転系�
 - ジョブ式(バックグラウンド実行、tposeジョブ同士は同時1件。他アプリとはGPUロックの
   取得待ちで自然に直列化)。
 
-ビューID(6種): `front`, `back`, `left`, `right`(以上 `for_3d: true`)、
-`front_left_45`, `front_right_45`(参考出力、`for_3d: false`)
+ビューID(5種): `front`, `back`, `left`, `right`(以上 `for_3d: true`)、
+`front_left_45`(参考出力、`for_3d: false`)。**45度は左のみ**(モデルが45度の左右を
+区別できず同じ絵が出るため、`front_right_45` は2026-07-29に削除した)
 
 ### POST /api/tpose/generate
 

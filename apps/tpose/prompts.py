@@ -157,10 +157,11 @@ VIEWS = [
         ),
         "for_3d": True,
     },
-    # **45度ビューの左右は区別できない(既知の制約)**: 現行文言でも、真横で効いた
-    # 「向きだけを言う」書き換え(「45度だけ画面左を向く」)でも、左右で同じ絵が出る
-    # (実測: 頭の水平ずれが cur_L/cur_R とも +28〜29px、書き換え版も +22〜24px)。
-    # for_3d=False の参考出力なので現状は放置している。
+    # **45度は左のみ提供する**(2026-07-29、ユーザー判断で右前45度を削除)。
+    # 45度ビューの左右はモデルが区別できず、`front_left_45` と `front_right_45` で
+    # 同じ絵が出ていた(実測: 頭の水平ずれが両者とも +28〜29px。真横で効いた
+    # 「向きだけを言う」書き換えでも +22〜24px で変わらず)。同じ絵を2枚出す意味が
+    # ないため右を削除した。for_3d=False の参考出力である点は従来どおり。
     {
         "key": "front_left_45",
         "label_ja": "左前45度",
@@ -168,16 +169,6 @@ VIEWS = [
         "view": (
             "Show the character from a 3/4 front-left angle, showing both front and "
             "left side details"
-        ),
-        "for_3d": False,
-    },
-    {
-        "key": "front_right_45",
-        "label_ja": "右前45度",
-        "label_en": "Front-Right 45°",
-        "view": (
-            "Show the character from a 3/4 front-right angle, showing both front and "
-            "right side details"
         ),
         "for_3d": False,
     },
