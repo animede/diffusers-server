@@ -2685,6 +2685,10 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
       totalViewCount = data.views.length;
       for (const v of data.views) {
         const label = document.createElement("label");
+        // .gen-form label は flex-direction:column(入力欄の上にラベル文を置く既定)
+        // なので、そのままだとチェックボックスと文字が縦積みになる。
+        // 既存の .checkbox-row(横並び強制)を当てる(ユーザー報告 2026-07-29)。
+        label.className = "checkbox-row";
         label.style.fontWeight = "normal";
         const cb = document.createElement("input");
         cb.type = "checkbox";
@@ -2867,6 +2871,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     editViewsEl.innerHTML = "";
     for (const v of views) {
       const label = document.createElement("label");
+      label.className = "checkbox-row";   // 縦積み防止(上記と同じ理由)
       label.style.fontWeight = "normal";
       const cb = document.createElement("input");
       cb.type = "checkbox";
