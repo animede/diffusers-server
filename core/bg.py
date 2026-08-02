@@ -6,6 +6,8 @@
   - "anime": SkyTNT/anime-segmentation の ISNet(`skytnt/anime-seg` の `isnetis.onnx`、
     Apache-2.0)。**アニメ・イラスト・ぬいぐるみ的なキャラクター画像で汎用モデルより
     切り抜きが良い**ためユーザー要望で追加した。
+    - "birefnet_hr_matting": ZhengPeng7/BiRefNet_HR-matting。2048px入力の
+        trimap不要アルファマッティング。髪束の隙間・毛先・レース等の細部向け。
 
 依存は追加していない: onnxruntime は rembg が既に使っており、cv2 も他機能
 (ControlNet の canny、LTX-2.3 の動画読み込み)で使用済み。モデルは
@@ -22,7 +24,7 @@ import numpy as np
 from PIL import Image
 
 # 方式名(APIの method パラメータで指定する値)
-BG_METHODS = ("rembg", "anime")
+BG_METHODS = ("rembg", "anime", "birefnet_hr_matting")
 DEFAULT_BG_METHOD = "rembg"
 
 _ANIME_REPO = "skytnt/anime-seg"
@@ -31,6 +33,13 @@ _ANIME_SIZE = 1024  # ONNX の入力は [1,3,1024,1024] 固定(実機で確認�
 
 _anime_session = None
 _anime_lock = threading.Lock()
+
+_BIREFNET_REPO = "ZhengPeng7/BiRefNet_HR-matting"
+_BIREFNET_SIZE = 2048
+_birefnet_model = None
+_birefnet_device = None
+_birefnet_load_lock = threading.Lock()
+_birefnet_infer_lock = threading.Lock()
 
 
 def _anime_model_path() -> str:
@@ -96,6 +105,60 @@ def _remove_background_anime(img: Image.Image) -> Image.Image:
     return out
 
 
+def _get_birefnet_model():
+    """BiRefNet HR Mattingを遅延ロードする。"""
+    global _birefnet_model, _birefnet_device
+    if _birefnet_model is None:
+        with _birefnet_load_lock:
+            if _birefnet_model is None:
+                import torch
+                from transformers import AutoModelForImageSegmentation
+
+                requested = (os.environ.get("DS_BIREFNET_DEVICE") or "cuda").strip().lower()
+                device = "cuda" if requested == "cuda" and torch.cuda.is_available() else "cpu"
+                print(f"[core.bg] BiRefNet HR Mattingをロードします: {_BIREFNET_REPO} ({device})")
+                model = AutoModelForImageSegmentation.from_pretrained(
+                    _BIREFNET_REPO, trust_remote_code=True
+                ).eval()
+                model = model.half().to(device) if device == "cuda" else model.to(device)
+                _birefnet_model = model
+                _birefnet_device = device
+    return _birefnet_model, _birefnet_device
+
+
+def _remove_background_birefnet(img: Image.Image) -> Image.Image:
+    """BiRefNet_HR-mattingのソフトアルファを保持したRGBAを返す。"""
+    import torch
+    from torchvision import transforms
+
+    transform = transforms.Compose([
+        transforms.Resize((_BIREFNET_SIZE, _BIREFNET_SIZE)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ])
+    tensor = transform(img.convert("RGB")).unsqueeze(0)
+
+    from core import gpu
+    wants_cuda = (os.environ.get("DS_BIREFNET_DEVICE") or "cuda").strip().lower() == "cuda"
+    gpu_lock = gpu.generation_lock if wants_cuda and torch.cuda.is_available() else threading.Lock()
+    with _birefnet_infer_lock, gpu_lock, torch.inference_mode():
+        model, device = _get_birefnet_model()
+        if device == "cuda":
+            tensor = tensor.half().to(device)
+            gpu.empty_cache()
+        else:
+            tensor = tensor.to(device)
+        prediction = model(tensor)[-1].sigmoid().float().cpu()[0, 0]
+    del tensor
+    if device == "cuda":
+        gpu.empty_cache()
+
+    alpha = transforms.ToPILImage()(prediction).resize(img.size, Image.Resampling.LANCZOS)
+    out = img.convert("RGBA")
+    out.putalpha(alpha)
+    return out
+
+
 def resolve_method(method: str) -> str:
     """方式名を正規化する(未知の値は既定へフォールバックし警告を出す)。"""
     value = (method or DEFAULT_BG_METHOD).strip().lower()
@@ -109,10 +172,14 @@ def resolve_method(method: str) -> str:
 def remove_background(img: Image.Image, method: str = DEFAULT_BG_METHOD) -> Image.Image:
     """背景を除去して RGBA(背景透過)画像を返す。
 
-    method: "rembg"(既定、汎用)| "anime"(アニメ・イラスト・キャラクター向け)
+    method: "rembg"(既定、汎用)| "anime"(アニメ向け)|
+      "birefnet_hr_matting"(髪・毛先・レース向け高精度マッティング)
     """
-    if resolve_method(method) == "anime":
+    resolved = resolve_method(method)
+    if resolved == "anime":
         return _remove_background_anime(img)
+    if resolved == "birefnet_hr_matting":
+        return _remove_background_birefnet(img)
     # rembg / isnet-general-use(従来実装。apps/charsheet/bg.py に置いていたもの)
     from apps.charsheet.bg import remove_background_rembg
 

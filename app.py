@@ -545,7 +545,7 @@ async def make_canny(
 
 
 # ============================================================================
-# 背景削除ユーティリティ(おまけ機能、GPU不使用・ロック不要)
+# 背景削除ユーティリティ(rembg / animeはCPU、BiRefNet HR Mattingは既定GPU)
 # ============================================================================
 # rembg(isnet-general-use, ONNX)は apps/charsheet/bg.py がキャラシートの
 # remove_bg 機能向けに既に使っている実装をそのまま再利用する(セッションは
@@ -557,8 +557,8 @@ async def api_remove_bg(
     image: UploadFile = File(...),
     method: str = Form(bg_mod.DEFAULT_BG_METHOD),
 ):
-    """背景除去。`method` で方式を選ぶ(`rembg`=汎用 / `anime`=アニメ・キャラクター向け、
-    core/bg.py 参照)。未知の値は既定へフォールバックする。"""
+    """背景除去。`method` で方式を選ぶ(`rembg`=汎用 / `anime`=アニメ向け /
+    `birefnet_hr_matting`=髪・毛先向け高精度マッティング)。"""
     contents = await image.read()
     try:
         src = _open_upload_image(contents, "RGBA")

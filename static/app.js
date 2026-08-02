@@ -2653,6 +2653,8 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   const bodyPreset = document.getElementById("tp-body-preset");
   const extraInput = document.getElementById("tp-extra-input");
   const generateBtn = document.getElementById("tp-generate-btn");
+  const poseModeInputs = Array.from(document.querySelectorAll('input[name="tp-pose-mode"]'));
+  const poseModeHint = document.getElementById("tp-pose-mode-hint");
   const errorEl = document.getElementById("tp-error-message");
   const statusEl = document.getElementById("tp-status-message");
   const progressWrap = document.getElementById("tp-progress");
@@ -2662,11 +2664,34 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
   const checkboxesEl = document.getElementById("tp-view-checkboxes");
   const zipRow = document.getElementById("tp-zip-row");
   const zipLink = document.getElementById("tp-zip-link");
+  const alphaDialog = document.getElementById("tp-alpha-dialog");
+  const alphaImage = document.getElementById("tp-alpha-image");
+  const alphaMarkers = document.getElementById("tp-alpha-markers");
+  const alphaAuto = document.getElementById("tp-alpha-auto");
+  const alphaThreshold = document.getElementById("tp-alpha-threshold");
+  const alphaTolerance = document.getElementById("tp-alpha-tolerance");
+  const alphaFeather = document.getElementById("tp-alpha-feather");
+  const alphaMessage = document.getElementById("tp-alpha-message");
 
   let pollTimer = null;
   let busy = false;
   let totalViewCount = 4;
   let currentJobId = null;   // 生成後の編集(/edit・/undo)の対象ジョブ
+
+  const POSE_MODE_UI = {
+    t_pose: ["T体型で生成", "両腕を肩の高さで水平に広げたTポーズに変換します。"],
+    a_pose: ["A体型で生成", "両腕を斜め下へ自然に広げたAポーズに変換します。"],
+    keep: ["入力ポーズのまま生成", "入力画像の体・腕・脚のポーズを変えずに、各方向のビューを生成します。"],
+  };
+  const selectedPoseMode = () =>
+    (poseModeInputs.find((input) => input.checked) || {}).value || "t_pose";
+  const updatePoseModeUi = () => {
+    const [buttonText, hintText] = POSE_MODE_UI[selectedPoseMode()] || POSE_MODE_UI.t_pose;
+    generateBtn.textContent = buttonText;
+    if (poseModeHint) poseModeHint.textContent = hintText;
+  };
+  poseModeInputs.forEach((input) => input.addEventListener("change", updatePoseModeUi));
+  updatePoseModeUi();
 
   const showError = (msg) => {
     errorEl.textContent = msg;
@@ -2728,6 +2753,80 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     queued: "待機中", running: "生成中", recoloring: "色調整中",
     editing: "編集中", upscaling: "拡大中", done: "完了", error: "エラー",
   };
+
+  let alphaKey = null;
+  let alphaPoints = [];
+
+  function alphaShowMessage(message, isError = false) {
+    alphaMessage.textContent = message || "";
+    alphaMessage.classList.toggle("hidden", !message);
+    alphaMessage.classList.toggle("form-error", isError);
+  }
+
+  function alphaRenderMarkers() {
+    alphaMarkers.innerHTML = "";
+    if (!alphaImage.naturalWidth || !alphaImage.naturalHeight) return;
+    for (const point of alphaPoints) {
+      const marker = document.createElement("span");
+      marker.className = "alpha-refine-marker";
+      marker.style.left = `${point.x / alphaImage.naturalWidth * 100}%`;
+      marker.style.top = `${point.y / alphaImage.naturalHeight * 100}%`;
+      alphaMarkers.appendChild(marker);
+    }
+  }
+
+  function openAlphaRefine(key) {
+    if (!currentJobId || !alphaDialog) return;
+    alphaKey = key; alphaPoints = []; alphaRenderMarkers(); alphaShowMessage("");
+    const imageKey = key.endsWith("_nobg") ? key : `${key}_nobg`;
+    alphaImage.src = `/api/tpose/jobs/${currentJobId}/images/${imageKey}.png?t=${Date.now()}`;
+    alphaDialog.showModal();
+  }
+
+  async function submitAlphaRefine(undo = false) {
+    if (!currentJobId || !alphaKey) return;
+    const fd = new FormData(); fd.append("key", alphaKey);
+    if (!undo) {
+      fd.append("auto", alphaAuto.checked ? "true" : "false");
+      fd.append("white_threshold", alphaThreshold.value);
+      fd.append("color_tolerance", alphaTolerance.value);
+      fd.append("feather", alphaFeather.value);
+      fd.append("points", alphaPoints.map((p) => `${p.x},${p.y}`).join(";"));
+      if (!alphaAuto.checked && !alphaPoints.length) {
+        alphaShowMessage("自動除去をONにするか、透明にしたい場所をクリックしてください。", true); return;
+      }
+    }
+    const applyBtn = document.getElementById("tp-alpha-apply"); applyBtn.disabled = true;
+    alphaShowMessage(undo ? "補正を取り消しています..." : "透明化を適用しています...");
+    try {
+      const suffix = undo ? "/refine-alpha/undo" : "/refine-alpha";
+      const resp = await fetch(`/api/tpose/jobs/${currentJobId}${suffix}`, {method:"POST", body:fd});
+      if (!resp.ok) { const err = await resp.json().catch(() => ({})); throw new Error(err.detail || `HTTP ${resp.status}`); }
+      const data = await resp.json(); alphaPoints = []; alphaRenderMarkers();
+      const imageKey = alphaKey.endsWith("_nobg") ? alphaKey : `${alphaKey}_nobg`;
+      alphaImage.src = `/api/tpose/jobs/${currentJobId}/images/${imageKey}.png?t=${Date.now()}`;
+      alphaShowMessage(undo ? "直前の補正を取り消しました。" : `${data.removed_pixels.toLocaleString()}画素を補正しました。`);
+      pollJob(currentJobId);
+    } catch (err) { alphaShowMessage(err.message, true); } finally { applyBtn.disabled = false; }
+  }
+
+  if (alphaDialog) {
+    alphaImage.addEventListener("load", alphaRenderMarkers);
+    alphaImage.addEventListener("click", (event) => {
+      const rect = alphaImage.getBoundingClientRect();
+      alphaPoints.push({
+        x: Math.max(0, Math.min(alphaImage.naturalWidth - 1, Math.round((event.clientX - rect.left) * alphaImage.naturalWidth / rect.width))),
+        y: Math.max(0, Math.min(alphaImage.naturalHeight - 1, Math.round((event.clientY - rect.top) * alphaImage.naturalHeight / rect.height))),
+      });
+      alphaRenderMarkers(); alphaShowMessage(`${alphaPoints.length}か所を指定中`);
+    });
+    document.getElementById("tp-alpha-close").addEventListener("click", () => alphaDialog.close());
+    document.getElementById("tp-alpha-clear").addEventListener("click", () => { alphaPoints=[]; alphaRenderMarkers(); alphaShowMessage(""); });
+    document.getElementById("tp-alpha-apply").addEventListener("click", () => submitAlphaRefine(false));
+    document.getElementById("tp-alpha-undo").addEventListener("click", () => submitAlphaRefine(true));
+    for (const [input, output] of [[alphaThreshold,"tp-alpha-threshold-out"],[alphaTolerance,"tp-alpha-tolerance-out"],[alphaFeather,"tp-alpha-feather-out"]])
+      input.addEventListener("input", () => { document.getElementById(output).value = input.value; });
+  }
 
   function tpCreateTile(v) {
     const tile = document.createElement("div");
@@ -2792,10 +2891,15 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     undoOne.style.display = "none";
     undoOne.addEventListener("click", () => applyUndo([v.key]));
     actions.appendChild(undoOne);
+    const refineAlphaBtn = document.createElement("button");
+    refineAlphaBtn.type = "button"; refineAlphaBtn.className = "tiny-btn secondary";
+    refineAlphaBtn.textContent = "白残りを修正"; refineAlphaBtn.style.display = "none";
+    refineAlphaBtn.addEventListener("click", () => openAlphaRefine(refineAlphaBtn.dataset.targetKey || v.key));
+    actions.appendChild(refineAlphaBtn);
     tile.appendChild(actions);
     viewsGrid.appendChild(tile);
     const entry = { tile, img, spinner, status, dl, dlNobg, dlUp, dlUpNobg,
-                    actions, undoOne, rev: -1 };
+                    actions, undoOne, refineAlphaBtn, rev: -1 };
     tpTiles.set(v.key, entry);
     return entry;
   }
@@ -2816,24 +2920,28 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
         t.rev = rev;
       }
       if (v.download_url) {
-        t.dl.href = v.download_url;
+        t.dl.href = `${v.download_url}?v=${rev}`;
         t.dl.style.display = v.status === "done" ? "block" : "none";
       }
       if (v.nobg_download_url) {
-        t.dlNobg.href = v.nobg_download_url;
+        t.dlNobg.href = `${v.nobg_download_url}?v=${rev}`;
         t.dlNobg.style.display = "block";
+        t.refineAlphaBtn.style.display = "inline-block";
+        t.refineAlphaBtn.dataset.targetKey = v.up_nobg_url ? `${v.key}_2048_nobg` : v.key;
+        t.refineAlphaBtn.textContent = v.up_nobg_url ? "2048透過版の白残りを修正" : "白残りを修正";
       } else {
         t.dlNobg.style.display = "none";
+        t.refineAlphaBtn.style.display = "none";
       }
       if (v.up_download_url) {
-        t.dlUp.href = v.up_download_url;
+        t.dlUp.href = `${v.up_download_url}?v=${rev}`;
         t.dlUp.textContent = `${v.up_size || "2048"} 版をダウンロード`;
         t.dlUp.style.display = "block";
       } else {
         t.dlUp.style.display = "none";
       }
       if (v.up_nobg_download_url) {
-        t.dlUpNobg.href = v.up_nobg_download_url;
+        t.dlUpNobg.href = `${v.up_nobg_download_url}?v=${rev}`;
         t.dlUpNobg.textContent = `${v.up_size || "2048"} 透過版をダウンロード`;
         t.dlUpNobg.style.display = "block";
       } else {
@@ -3045,7 +3153,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
       editBox.classList.remove("hidden");
       progressWrap.classList.add("hidden");
       if (job.status === "done") {
-        showStatus("完了しました。image-3d へ渡すのは正面・背面の2枚です。");
+        showStatus("完了しました。image-3d へ渡すのは正面・背面・左右真横の4枚です。");
       } else {
         showStatus("");
         showError("生成エラー: " + (job.error || "不明なエラー"));
@@ -3072,6 +3180,7 @@ document.getElementById("mageflow-edit-form").addEventListener("submit", async (
     fd.append("image", fileInput.files[0]);
     fd.append("seed", seedInput.value || "0");
     fd.append("subject", subjectInput.value);
+    fd.append("pose_mode", selectedPoseMode());
     if (removeBgInput.checked) fd.append("remove_bg", "true");
     // 背景除去の方式(core/bg.py)。Tポーズはキャラクターが対象なので既定はアニメ向け
     fd.append("bg_method", (document.getElementById("tp-bgmethod-input") || {}).value || "anime");

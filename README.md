@@ -21,7 +21,7 @@ VRAM に同時常駐できないモデル同士は自動でアンロード(排�
 - **Edit(参照画像編集)** — Qwen-Image-Edit-Plus(2511)/ JoyAI-Edit-Plus(複数参照画像合成)
 - **ControlNet**(Canny 等)、**Inpaint**(マスク指定領域の再生成)
 - **Layered**(RGBA レイヤー分解生成)
-- **背景削除**(rembg / anime-segmentation を選択可、独立タブ + 各結果パネルへのインスタントボタン)
+- **背景削除**(rembg / anime-segmentation / BiRefNet HR Mattingを選択可、独立タブ + 各結果パネルへのインスタントボタン)
 - **キャラクターシート生成**(1枚の画像から8方向のキャラクター画像を自動生成)
 - **動画生成(LTX-2.3)** — Text-to-Video / Image-to-Video / First-Last-Frame 補間 /
   リップシンク(Image+Audio-to-Video)/ 任意キーフレーム条件付け / Video-to-Audio /
@@ -186,7 +186,7 @@ Mage-Flow を使う場合はラッパーサービスも起動します(別プロ
 | `POST /api/edit` | Qwen-Image-Edit-Plus によるマルチ参照画像編集 |
 | `POST /api/controlnet` / `/api/inpaint` | ControlNet(Canny等)/ Inpainting |
 | `POST /api/layered` | RGBAレイヤー分解生成 |
-| `POST /api/remove_bg` | 背景除去(`method` で rembg / anime-segmentation を選択。2026-07-28追加) |
+| `POST /api/remove_bg` | 背景除去(`method` で rembg / anime-segmentation / BiRefNet HR Mattingを選択) |
 | `POST /api/flux2/t2i` / `/api/flux2/i2i` | FLUX.2-dev |
 | `POST /api/zimage/t2i` / `/api/zimage/i2i` / `/api/zimage/inpaint` | Z-Image-Turbo |
 | `POST /api/ltx2/t2v` / `/i2v` / `/flf` / `/ia2v` / `/keyframes` / `/v2a` / `/iclora` | LTX-2.3 動画生成(各種条件付け・音声・編集モード) |
@@ -195,7 +195,7 @@ Mage-Flow を使う場合はラッパーサービスも起動します(別プロ
 | `GET /api/mageflow/status` / `POST /api/mageflow/unload` | Mage-Flow ラッパーの状態確認 / 解放 |
 | `POST /api/charsheet/generate` 他 | キャラクターシート生成ジョブ(8方向) |
 | `POST /api/scene_angles/generate` 他 | シーンアングル生成ジョブ(1枚のシーン画像→カメラ8アングル、charsheetと同一パイプライン。2026-07-24追加) |
-| `POST /api/tpose/generate` 他 | Tポーズ4ビュー生成ジョブ(1枚の画像→正面/背面/左前45度/右前45度。image-3dのマルチビュー入力・rig-serviceのTポーズ前提リグ向け。ビュー個別DL/ZIP・背景透過版の併産に対応。2026-07-26追加) |
+| `POST /api/tpose/generate` 他 | Tポーズ4ビュー生成ジョブ(1枚の画像→正面/背面/左右。T/A/入力ポーズ維持を選択可。ビュー個別DL/ZIP・背景透過版・透過版の白残り補正に対応) |
 | `POST /api/outpaint` | アウトペイント(画角拡張。既存インペイント流用、中央部は元画像ピクセル保証。2026-07-24追加) |
 | `POST /api/prompt/enhance` / `/api/prompt/translate` | LLM プロンプト支援(要別途LLMサーバ) |
 | `GET /api/status` | 全ファミリーのロード状態・VRAM |

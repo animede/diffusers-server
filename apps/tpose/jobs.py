@@ -38,6 +38,7 @@ from apps.tpose.prompts import (
     CLAWS_MODES,
     NEGATIVE_PROMPT,
     PALMS_MODES,
+    POSE_MODES,
     SUBJECT_MODES,
     TAIL_PRESETS,
     VIEW_BY_KEY,
@@ -49,6 +50,7 @@ from apps.tpose.prompts import (
 )
 from core import gpu
 from core import progress as progress_mod
+from core.alpha_refine import refine_white_alpha
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OUTPUTS_DIR = os.path.join(BASE_DIR, "outputs", "tpose")
@@ -275,6 +277,24 @@ def _cutout_rgba(src_rgb: Image.Image, rembg_rgba: Image.Image) -> Image.Image:
     return out
 
 
+def _finalize_cutout(src_rgb: Image.Image, model_rgba: Image.Image, method: str) -> Image.Image:
+    """方式に応じて最終RGBAを作る。"""
+    if method == "birefnet_hr_matting":
+        import numpy as np
+        from scipy import ndimage
+
+        rgb = np.asarray(src_rgb.convert("RGB"), dtype=np.float32)
+        model_alpha = np.asarray(model_rgba.getchannel("A"), dtype=np.float32)
+        white_distance = np.sqrt(np.square(255.0 - rgb).sum(axis=2))
+        white_factor = np.clip((white_distance - 5.0) / (28.0 - 5.0), 0.0, 1.0)
+        white_factor = ndimage.gaussian_filter(white_factor, 0.6)
+        refined_alpha = np.minimum(model_alpha, white_factor * 255.0).astype(np.uint8)
+        out = src_rgb.convert("RGBA")
+        out.putalpha(Image.fromarray(refined_alpha, mode="L"))
+        return out
+    return _cutout_rgba(src_rgb, model_rgba)
+
+
 def _remove_bg_pass(job_id: str, job_dir: str, keys: list, method: str = "rembg") -> None:
     """生成済み各ビューの背景を除去し `<key>_nobg.png`(RGBA)として保存する。
 
@@ -294,7 +314,8 @@ def _remove_bg_pass(job_id: str, job_dir: str, keys: list, method: str = "rembg"
         try:
             with Image.open(src) as im:
                 src_rgb = im.convert("RGB")
-                rgba = _cutout_rgba(src_rgb, remove_background(src_rgb, method=method))
+                model_rgba = remove_background(src_rgb, method=method)
+                rgba = _finalize_cutout(src_rgb, model_rgba, method)
             rgba.save(os.path.join(job_dir, f"{key}_nobg.png"))
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
@@ -381,6 +402,7 @@ def _run_job(job_id: str, input_path: str, tail_ref_path: Optional[str], seed: i
                 costume=params.get("costume", ""),
                 extra=params["extra_prompt"],
                 first_stage=first_stage,
+                pose_mode=params.get("pose_mode", "t_pose"),
             )
             if mirrored:
                 prompt_note = prompt + "  ※参照画像を鏡像にして左向きで生成し、出力を左右反転"
@@ -504,6 +526,7 @@ async def generate(
     seed: int = Form(0),
     views: str = Form(""),
     subject: str = Form("auto"),
+    pose_mode: str = Form("t_pose"),
     palms: str = Form("forward"),
     paw_pads: str = Form("auto"),
     claws: str = Form("none"),
@@ -530,6 +553,7 @@ async def generate(
     - subject: 被写体タイプ。"auto"(既定、動物/人間どちらの語彙も使わない中立)|
       "animal"(毛皮・肉球のある動物やぬいぐるみ)| "human"(人物・リアルな人形)。
       **リアルな人形で背面が動物化する/手に肉球が付く場合は "human" を指定する**
+        - pose_mode: "t_pose"(既定) / "a_pose" / "keep"(入力画像のポーズを維持)
     - palms: "forward"(既定、手のひらをカメラへ向ける=リグ用Tポーズの標準)|
       "natural"(指示しない)
     - paw_pads: "auto"(既定、参照画像の肉球色を踏襲)| "none"(肉球に言及しない)|
@@ -557,12 +581,13 @@ async def generate(
       適用し、正面は調整後の画像を後続ビューの参照に使う(色をビュー間で揃えるため)。
       1ビューあたり生成が2回になる(所要時間はおよそ2倍)。**強い指示は同一性も動かす**
       (実測で毛色が黄褐色へ寄り爪が戻った例あり、apps/tpose/prompts.py参照)
-    - bg_method: 背景除去の方式(既定 `anime`=アニメ・キャラクター向け /
-      `rembg`=汎用。core/bg.py 参照)。Tポーズの被写体はキャラクターなので既定を
+        - bg_method: 背景除去の方式(既定 `anime`=アニメ・キャラクター向け /
+            `birefnet_hr_matting`=髪・毛先向け高精度マッティング / `rembg`=汎用。
+            core/bg.py 参照)。Tポーズの被写体はキャラクターなので既定を
       `anime` にしている(淡い色の毛や髪の取りこぼしが少ない: 実測 27,232px → 13,733px)
-    - remove_bg: 背景除去(rembg / isnet-general-use)。true なら各ビューの背景透過版
+        - remove_bg: 背景除去。true なら各ビューの背景透過版
       `<key>_nobg.png`(RGBA)を併せて生成する(白背景版はそのまま残す)。
-      生成完了後・GPUロック解放後にCPUで処理するため、GPU待ちは発生しない
+            anime/rembg はCPU、BiRefNetは既定でGPUを使う
     """
     global current_job_id
 
@@ -576,6 +601,11 @@ async def generate(
         raise HTTPException(
             status_code=400,
             detail=f"subject は {list(SUBJECT_MODES)} のいずれかです。",
+        )
+    if pose_mode not in POSE_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"pose_mode は {list(POSE_MODES)} のいずれかです。",
         )
 
     with current_job_lock:
@@ -618,6 +648,7 @@ async def generate(
         "bg_method": bg_method,
         "recolor": recolor,
         "subject": subject,
+        "pose_mode": pose_mode,
         "palms": palms,
         "paw_pads": paw_pads,
         "claws": claws,
@@ -667,6 +698,15 @@ def _resolve_view_file(key: str) -> str:
     return f"{key}.png"
 
 
+def _resolve_nobg_key(key: str) -> str:
+    """白残り補正の対象を透過版の許可済みキーへ解決する。"""
+    suffix = "_2048_nobg" if key.endswith("_2048_nobg") else "_nobg"
+    base = key[: -len(suffix)] if key.endswith(suffix) else key
+    if base not in VIEW_BY_KEY:
+        raise HTTPException(status_code=404, detail="不正なビューIDです")
+    return f"{base}{suffix}"
+
+
 @router.get("/jobs/{job_id}/images/{key}.png")
 async def get_view_image(job_id: str, key: str):
     """ビュー画像の表示用(inline)。`{key}` に `_nobg` 付きを指定すると背景透過版。"""
@@ -675,7 +715,9 @@ async def get_view_image(job_id: str, key: str):
     path = os.path.join(OUTPUTS_DIR, job_id, f"{key}.png")
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="画像が見つかりません")
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(
+        path, media_type="image/png", headers={"Cache-Control": "no-store"}
+    )
 
 
 @router.get("/jobs/{job_id}/download/{key}.png")
@@ -692,7 +734,8 @@ async def download_view_image(job_id: str, key: str):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="画像が見つかりません")
     return FileResponse(
-        path, media_type="image/png", filename=f"tpose_{key}_{job_id}.png"
+        path, media_type="image/png", filename=f"tpose_{key}_{job_id}.png",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -704,7 +747,8 @@ async def download_zip(job_id: str):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="ZIP が見つかりません")
     return FileResponse(
-        path, media_type="application/zip", filename=f"tpose_{job_id}.zip"
+        path, media_type="application/zip", filename=f"tpose_{job_id}.zip",
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -715,6 +759,66 @@ async def get_input_image(job_id: str):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="画像が見つかりません")
     return FileResponse(path, media_type="image/png")
+
+
+@router.post("/jobs/{job_id}/refine-alpha")
+async def refine_alpha(
+    job_id: str, key: str = Form(...), white_threshold: int = Form(250),
+    auto: bool = Form(True), points: str = Form(""),
+    color_tolerance: int = Form(12), feather: float = Form(0.8),
+):
+    """背景削除済みPNGに残った白を、自動またはクリック座標から追加除去する。"""
+    _check_job_id(job_id)
+    resolved = _resolve_nobg_key(key)
+    job_dir = _job_dir(job_id)
+    path = os.path.join(job_dir, f"{resolved}.png")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="背景透過版が見つかりません")
+    parsed_points = []
+    if points.strip():
+        try:
+            for item in points.split(";"):
+                x, y = item.split(",", 1)
+                parsed_points.append((int(x), int(y)))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="points は x,y;x,y 形式で指定してください")
+    try:
+        with Image.open(path) as image:
+            output, removed = refine_white_alpha(
+                image, white_threshold=white_threshold, auto=auto,
+                points=parsed_points, color_tolerance=color_tolerance, feather=feather)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if removed:
+        prev = os.path.join(job_dir, f"{resolved}_alpha_prev.png")
+        shutil.copy2(path, prev)
+        output.save(path)
+        base = resolved.removesuffix("_2048_nobg").removesuffix("_nobg")
+        _bump_view_rev(job_id, base)
+        with jobs_lock:
+            job = dict(jobs.get(job_id) or {})
+        _build_zip(job_dir, [v["key"] for v in job.get("views", [])])
+    return {"job_id": job_id, "key": resolved, "removed_pixels": removed}
+
+
+@router.post("/jobs/{job_id}/refine-alpha/undo")
+async def undo_refine_alpha(job_id: str, key: str = Form(...)):
+    """直前の透過版白残り補正を取り消す。"""
+    _check_job_id(job_id)
+    resolved = _resolve_nobg_key(key)
+    job_dir = _job_dir(job_id)
+    path = os.path.join(job_dir, f"{resolved}.png")
+    prev = os.path.join(job_dir, f"{resolved}_alpha_prev.png")
+    if not os.path.exists(prev):
+        raise HTTPException(status_code=409, detail="取り消せる白残り補正がありません")
+    shutil.copy2(prev, path)
+    os.remove(prev)
+    base = resolved.removesuffix("_2048_nobg").removesuffix("_nobg")
+    _bump_view_rev(job_id, base)
+    with jobs_lock:
+        job = dict(jobs.get(job_id) or {})
+    _build_zip(job_dir, [v["key"] for v in job.get("views", [])])
+    return {"job_id": job_id, "key": resolved, "restored": True}
 
 
 # ============================================================================
@@ -975,7 +1079,8 @@ def _run_upscale(job_id: str, keys: list, target: int):
                 try:
                     with Image.open(path) as im:
                         rgb = im.convert("RGB")
-                        rgba = _cutout_rgba(rgb, remove_background(rgb, method=method))
+                        model_rgba = remove_background(rgb, method=method)
+                        rgba = _finalize_cutout(rgb, model_rgba, method)
                     rgba.save(os.path.join(job_dir, f"{key}_2048_nobg.png"))
                 except Exception as exc:  # noqa: BLE001
                     traceback.print_exc()

@@ -637,14 +637,13 @@
   </section>
 
   <section class="panel tab-panel" id="tab-tpose">
-    <h2>Tポーズ4ビュー: 1枚の画像から3D化用のTポーズ立ち絵を生成</h2>
+    <h2>ポーズ付きマルチビュー: 1枚の画像から3D化用の立ち絵を生成</h2>
     <p class="panel-note">
-      両腕を水平に広げたTポーズ(手のひらを正面へ)の正面・背面・左前45度・右前45度を生成します。
-      image-3d のマルチビュー入力(Hunyuan3D-2mv)と rig-service の自動リグ/VRM化(Tポーズ前提)向け。
+      Tポーズ・Aポーズ・入力画像のポーズ維持から選び、正面・背面・左右真横・左前45度を生成します。
+      image-3d のマルチビュー入力(Hunyuan3D-2mv)と rig-service の自動リグ/VRM化向けです。
       正面を最初に生成し、他のビューはその正面画像を参照して連鎖生成します(前後の造形を揃えるため)。
-      <strong>image-3d へ渡すのは正面・背面の2枚</strong>にしてください(45度ビューは参考出力で、
-      2mv の left/right スロットへ入れるとカメラ事前分布を誤らせます。Tポーズの真横90度ビューは
-      手前の腕がカメラを向いて破綻するため提供しません)。
+      <strong>image-3d へ渡すのは正面・背面・左右真横の4枚</strong>です。45度ビューは参考出力で、
+      2mv の left/right スロットへ入れるとカメラ事前分布を誤らせます。
       入力は全身でも胸像でも可(写っていない部分はモデルが創作します)。
     </p>
 
@@ -654,6 +653,15 @@
           <label>入力キャラクター画像
             <input type="file" id="tp-file-input" name="image" accept="image/*" required>
           </label>
+          <fieldset class="pose-mode-fieldset">
+            <legend>ポーズモード</legend>
+            <div class="pose-mode-buttons">
+              <label><input type="radio" name="tp-pose-mode" value="t_pose" checked><span>T体型</span></label>
+              <label><input type="radio" name="tp-pose-mode" value="a_pose"><span>A体型</span></label>
+              <label><input type="radio" name="tp-pose-mode" value="keep"><span>入力画像のポーズを変えない</span></label>
+            </div>
+            <p class="form-hint pose-mode-hint" id="tp-pose-mode-hint">両腕を肩の高さで水平に広げたTポーズに変換します。</p>
+          </fieldset>
           <fieldset id="tp-view-fieldset" style="border:1px solid #444; border-radius:6px; padding:8px 12px;">
             <legend>生成するビュー(チェックしたものだけ生成)</legend>
             <div id="tp-view-checkboxes" class="form-grid"></div>
@@ -765,16 +773,17 @@
           <label>背景削除の方式
             <select id="tp-bgmethod-input">
               <option value="anime" selected>アニメ・キャラクター向け(anime-segmentation)</option>
+              <option value="birefnet_hr_matting">高精度・髪対応(BiRefNet HR Matting)</option>
               <option value="rembg">汎用(rembg / isnet-general-use)</option>
             </select>
           </label>
           <p class="form-hint">
-            rembg(isnet-general-use)で切り抜きます。白背景版はそのまま残るので、
-            切り抜きが不自然なときは白背景版を使えます。生成完了後にCPUで処理するため
-            GPUの待ちは発生しません(1枚1秒前後)。image-3d は自前で背景除去するため
+            「高精度・髪対応」は髪束の隙間や毛先の半透明を保つ2048pxマッティングです
+            (初回は約444MBのモデル取得が必要)。白背景版はそのまま残るので、
+            切り抜きが不自然なときは白背景版を使えます。image-3d は自前で背景除去するため
             必須ではありません。
           </p>
-          <button type="submit" class="primary-btn" id="tp-generate-btn">Tポーズ生成</button>
+          <button type="submit" class="primary-btn" id="tp-generate-btn">T体型で生成</button>
           <p id="tp-error-message" class="form-error hidden"></p>
           <p id="tp-status-message" class="status-message hidden"></p>
           <div id="tp-progress" class="progress-bar-wrap hidden">
@@ -856,6 +865,29 @@
         </div>
       </div>
     </div>
+
+    <dialog id="tp-alpha-dialog" class="alpha-refine-dialog">
+      <form method="dialog" class="alpha-refine-panel">
+        <div class="alpha-refine-head"><div>
+          <h3>透過画像の白残りを修正</h3>
+          <p>髪の隙間など残った白をクリックすると、連続する近似色だけを透明化します。</p>
+        </div><button type="button" class="tiny-btn secondary" id="tp-alpha-close">閉じる</button></div>
+        <div class="alpha-refine-stage checkerboard-bg"><img id="tp-alpha-image" alt="背景透過版の補正プレビュー"><div id="tp-alpha-markers" aria-hidden="true"></div></div>
+        <div class="alpha-refine-controls">
+          <label class="checkbox-row"><input type="checkbox" id="tp-alpha-auto" checked>外側の透明領域に接する白を自動除去</label>
+          <label>白のしきい値 <output id="tp-alpha-threshold-out">250</output><input type="range" id="tp-alpha-threshold" min="220" max="255" value="250"></label>
+          <label>クリック色の許容値 <output id="tp-alpha-tolerance-out">12</output><input type="range" id="tp-alpha-tolerance" min="0" max="50" value="12"></label>
+          <label>境界ぼかし <output id="tp-alpha-feather-out">0.8</output>px<input type="range" id="tp-alpha-feather" min="0" max="3" step="0.1" value="0.8"></label>
+        </div>
+        <p class="form-hint">赤い印が手動指定点です。白目や服の反射ではなく、透明にしたい白領域の内側をクリックしてください。</p>
+        <p id="tp-alpha-message" class="status-message hidden"></p>
+        <div class="view-tile-actions alpha-refine-actions">
+          <button type="button" class="tiny-btn secondary" id="tp-alpha-clear">指定点をクリア</button>
+          <button type="button" class="tiny-btn secondary" id="tp-alpha-undo">直前の補正を取り消す</button>
+          <button type="button" class="tiny-btn" id="tp-alpha-apply">透明化を適用</button>
+        </div>
+      </form>
+    </dialog>
   </section>
 
   <section class="panel tab-panel" id="tab-ltx2">

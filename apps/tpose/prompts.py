@@ -67,6 +67,21 @@ _T_POSE_ARMS = (
 _T_POSE_CLAUSE_FRONT = _T_POSE_ARMS
 _T_POSE_CLAUSE_OTHER = f"keeping exactly the same T-pose with {_T_POSE_ARMS}"
 
+POSE_MODES = ("t_pose", "a_pose", "keep")
+_A_POSE_ARMS = (
+    "both arms extended straight diagonally downward about 35 degrees away from the "
+    "body in a symmetrical A-pose, elbows straight, legs straight and slightly apart"
+)
+_A_POSE_CLAUSE_OTHER = f"keeping exactly the same A-pose with {_A_POSE_ARMS}"
+_KEEP_INPUT_POSE = (
+    "keep exactly the same body pose as the input image, preserving the precise arm, "
+    "hand, torso, leg and foot positions without changing the pose"
+)
+_KEEP_GENERATED_POSE = (
+    "keep exactly the same body pose as the reference view, preserving all arm, hand, "
+    "torso, leg and foot positions"
+)
+
 # 真横(left / right)ビューの腕の指示。**通常のTポーズ句の代わりに使う**。
 #
 # 経緯(2026-07-29、ユーザー要望「image-3dで横も使えるようになったので真横も生成したい」→
@@ -97,6 +112,14 @@ _SIDE_ARMS_CLAUSE = (
     "both arms are stretched straight forward in front of the body, parallel to each "
     "other at shoulder height, held clear of the torso so the complete side silhouette "
     "of the body stays visible"
+)
+
+# 真横で手前・奥の靴が前後にずれて見える問題への投影指定。角度だけでは3/4に戻るため、
+# 腰・膝・足首・靴が最終画像でどう見えるかを肯定形で明示する。
+_SIDE_FEET_CLAUSE = (
+    "in the side projection the hips, knees and ankles are precisely aligned, with the "
+    "near leg and near shoe forming one clean outer silhouette, exactly one shoe is "
+    "visible in strict side profile"
 )
 
 _KEEP_CLAUSE = (
@@ -437,7 +460,8 @@ _BACK_VIEW_NEUTRAL = (
 )
 
 
-def _view_clause(view_key: str, subject_kind: str, first_stage: bool = False) -> str:
+def _view_clause(view_key: str, subject_kind: str, first_stage: bool = False,
+                 pose_mode: str = "t_pose") -> str:
     """視点句。背面のみ被写体タイプで語彙を切替える。
 
     毛で覆われたキャラで "head"/"hair" 語彙を使うと後頭部が黒髪へ変質しやすい
@@ -454,8 +478,12 @@ def _view_clause(view_key: str, subject_kind: str, first_stage: bool = False) ->
         }.get(subject_kind, _BACK_VIEW_NEUTRAL)
     else:
         text = VIEW_BY_KEY[view_key]["view"]
-    if first_stage:
+    if first_stage and pose_mode == "t_pose":
         return "Change the pose to a T-pose: " + text[0].lower() + text[1:]
+    if first_stage and pose_mode == "a_pose":
+        return "Change the pose to an A-pose: " + text[0].lower() + text[1:]
+    if first_stage and pose_mode == "keep":
+        return "Change only the camera view: " + text[0].lower() + text[1:]
     return text
 
 
@@ -515,7 +543,8 @@ def _costume_clause(view_key: str, costume: str) -> str:
 def build_prompt(view_key: str, palms: str = "forward", paw_pads: str = "auto",
                  tail: str = "", body: str = "", extra: str = "",
                  first_stage: bool = False, subject: str = "auto",
-                 claws: str = "none", fur_color: str = "", costume: str = "") -> str:
+                 claws: str = "none", fur_color: str = "", costume: str = "",
+                 pose_mode: str = "t_pose") -> str:
     """1ビュー分のプロンプトを組み立てる。
 
     句の順序は実測で決めてある(下の「脚が伸びる問題」のコメント参照):
@@ -533,14 +562,21 @@ def build_prompt(view_key: str, palms: str = "forward", paw_pads: str = "auto",
     """
     subject_kind = resolve_subject(subject, paw_pads)
     is_side = view_key in ("left", "right")
-    if is_side:
+    if pose_mode not in POSE_MODES:
+        pose_mode = "t_pose"
+    if pose_mode == "keep":
+        pose_clause = _KEEP_INPUT_POSE if first_stage else _KEEP_GENERATED_POSE
+    elif pose_mode == "a_pose":
+        pose_clause = _A_POSE_ARMS if first_stage else _A_POSE_CLAUSE_OTHER
+    elif is_side:
         # 真横は通常のTポーズ句だと3/4止まりになる。腕の見え方を書いた専用句を使う
         # (_SIDE_ARMS_CLAUSE のコメント参照)。手のひらは真横では見えないので入れない。
-        t_pose = _SIDE_ARMS_CLAUSE
+        pose_clause = _SIDE_ARMS_CLAUSE
     else:
-        t_pose = _T_POSE_CLAUSE_FRONT if first_stage else _T_POSE_CLAUSE_OTHER
-    parts = [_view_clause(view_key, subject_kind, first_stage), t_pose]
-    palms_clause = "" if is_side else _palms_clause(view_key, palms, paw_pads, subject_kind)
+        pose_clause = _T_POSE_CLAUSE_FRONT if first_stage else _T_POSE_CLAUSE_OTHER
+    parts = [_view_clause(view_key, subject_kind, first_stage, pose_mode), pose_clause]
+    palms_clause = "" if is_side or pose_mode == "keep" else _palms_clause(
+        view_key, palms, paw_pads, subject_kind)
     if palms_clause:
         parts.append(palms_clause)
     parts.append(_KEEP_CLAUSE)
@@ -571,6 +607,10 @@ def build_prompt(view_key: str, palms: str = "forward", paw_pads: str = "auto",
             parts.append(claws_clause)
     if costume_clause:
         parts.append(costume_clause)
+    # 真横の幾何条件は末尾で最も強く効かせる。靴を履かないキャラクターでも
+    # near leg / outer silhouette が側面投影の手がかりとして働く。
+    if is_side and pose_mode == "t_pose":
+        parts.append(_SIDE_FEET_CLAUSE)
     return ", ".join(parts)
 
 

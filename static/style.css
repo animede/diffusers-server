@@ -106,6 +106,36 @@ body {
   gap: 22px;
 }
 
+.pose-mode-fieldset {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.pose-mode-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.pose-mode-buttons label { display: block; cursor: pointer; }
+.pose-mode-buttons input { position: absolute; opacity: 0; pointer-events: none; }
+.pose-mode-buttons span {
+  display: block;
+  padding: 9px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  color: var(--color-subtext);
+  font-weight: 600;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.pose-mode-buttons input:checked + span {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.pose-mode-buttons input:focus-visible + span {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.pose-mode-hint { margin: 8px 0 0; }
+
 .tabs {
   display: flex;
   gap: 4px;
@@ -1304,3 +1334,21 @@ button:disabled {
   border-radius: var(--radius-sm);
   padding: 6px 10px;
 }
+
+
+/* Tポーズ透過版の白残り補正 */
+.alpha-refine-dialog { width:min(920px,calc(100vw - 32px)); max-height:calc(100vh - 32px); border:1px solid var(--color-border); border-radius:var(--radius); padding:0; background:var(--color-panel); color:var(--color-text); }
+.alpha-refine-dialog::backdrop { background:rgba(0,0,0,.62); }
+.alpha-refine-panel { padding:16px; }
+.alpha-refine-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+.alpha-refine-head h3 { margin:0 0 4px; }
+.alpha-refine-head p { margin:0 0 10px; color:var(--color-subtext); font-size:13px; }
+.alpha-refine-stage { position:relative; width:fit-content; max-width:100%; margin:0 auto; line-height:0; }
+.alpha-refine-stage img { display:block; max-width:100%; max-height:58vh; width:auto; height:auto; cursor:crosshair; user-select:none; }
+#tp-alpha-markers { position:absolute; inset:0; pointer-events:none; }
+.alpha-refine-marker { position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px; border:2px solid #fff; border-radius:50%; background:#ef4444; box-shadow:0 0 0 1px #7f1d1d; }
+.alpha-refine-controls { display:grid; grid-template-columns:repeat(3,minmax(150px,1fr)); gap:10px; margin-top:12px; align-items:end; }
+.alpha-refine-controls .checkbox-row { grid-column:1/-1; }
+.alpha-refine-controls input[type="range"] { width:100%; }
+.alpha-refine-actions { justify-content:flex-end; padding:8px 0 0; }
+@media (max-width:700px) { .alpha-refine-controls { grid-template-columns:1fr; } }
