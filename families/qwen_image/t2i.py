@@ -38,7 +38,12 @@ from core.loaders import (
     load_transformer_from_pretrained_streaming,
     load_transformer_gguf,
 )
-from core.optimize import apply_attention_backend, apply_compile, configure_transformer_offload
+from core.optimize import (
+    apply_attention_backend,
+    apply_compile,
+    configure_transformer_offload,
+    suspended_whole_module_swap_offload,
+)
 from core import progress as progress_mod
 from core.resolve import COMFYUI_MODELS_DIR, resolve_model_path
 
@@ -260,9 +265,15 @@ def _apply_t2i_loras(pipe, gguf_quantized: bool = False) -> None:
     t2i_group = state.t2i_group
     try:
         path4 = resolve_model_path(T2I_LORA_4STEP_PATH, T2I_LORA_4STEP_HF_REPO, T2I_LORA_4STEP_HF_FILE)
-        pipe.load_lora_weights(path4, adapter_name="lightning4")
         path8 = resolve_model_path(T2I_LORA_8STEP_PATH, T2I_LORA_8STEP_HF_REPO, T2I_LORA_8STEP_HF_FILE)
-        pipe.load_lora_weights(path8, adapter_name="lightning8")
+        # group_lowvram の text_encoder 手動スワップ(accelerate の CpuOffload フック)が
+        # 付いたまま load_lora_weights() を呼ぶと、diffusers がパイプライン全体を
+        # model-cpu-offload 済みと誤検出してフックを剥がし、代わりに
+        # enable_model_cpu_offload() を掛け直してしまう(group offload と衝突する)。
+        # 詳細は core.optimize.suspended_whole_module_swap_offload() のdocstring参照。
+        with suspended_whole_module_swap_offload(pipe.text_encoder):
+            pipe.load_lora_weights(path4, adapter_name="lightning4")
+            pipe.load_lora_weights(path8, adapter_name="lightning8")
         pipe.disable_lora()  # 既定は無効
         t2i_group["lora_available"] = True
     except Exception as e:  # noqa: BLE001

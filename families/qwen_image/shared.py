@@ -20,6 +20,58 @@ from families.qwen_image import state
 from families.qwen_image.paths import BASE_REPO
 
 
+# 共有 text_encoder(Qwen2_5_VLForConditionalGeneration)の fp8 layerwise casting 用
+# skip パターン。diffusers の既定
+# (DEFAULT_SKIP_MODULES_PATTERN = ('pos_embed', 'patch_embed', 'norm', '^proj_in$', '^proj_out$'))
+# は diffusers 側 transformer の命名規則向けで、以下は拾えない:
+#   - embed_tokens(nn.Embedding。layerwise casting の対象レイヤーに含まれるため、
+#     指定しないとfp8化されてしまう)
+#   - lm_head(nn.Linear)
+#   - rotary_emb(バッファのみのモジュールだが念のため)
+# 一方 'norm' は re.search の部分一致なので RMSNorm 系(input_layernorm /
+# post_attention_layernorm / q_norm / k_norm 等)は既定のまま skip される。
+# 'patch_embed' も vision 側 patch_embed に部分一致する。
+# LTX-2.3 の LTX2_TE_FP8_SKIP_MODULES_PATTERN(families/ltx2/convert.py、CLAUDE.md 42番)と
+# 同じ考え方。
+QWEN_TE_FP8_SKIP_MODULES_PATTERN = (
+    "pos_embed", "patch_embed", "norm", "^proj_in$", "^proj_out$",  # diffusers既定を維持
+    "embed_tokens", "lm_head", "rotary_emb",  # Qwen2.5-VL 固有の追加保護
+)
+
+
+def _apply_te_quant(text_encoder) -> None:
+    """DS_QWEN_TE_QUANT に従って共有 text_encoder を量子化する(既定 "none" は何もしない)。
+
+    **CPU 上の text_encoder に対して呼ぶこと**(GPU へ載せる前)。layerwise casting は
+    呼んだ瞬間に圧縮が実行される(CLAUDE.md 12番)ので、CPU 上で圧縮してから GPU へ
+    載せれば、bf16 の約16GB が GPU 上に一度も存在せずに済む。
+    """
+    te_quant = state.get_runtime_config().te_quant
+    if te_quant in ("", "none", "off", "bf16"):
+        return
+    if te_quant != "fp8":
+        print(
+            f"[families.qwen_image] warning: DS_QWEN_TE_QUANT={te_quant!r} は未対応です"
+            f"(対応値: none / fp8)。bf16 のままロードします"
+        )
+        return
+
+    from diffusers.hooks import apply_layerwise_casting
+
+    n_before = sum(p.numel() * p.element_size() for p in text_encoder.parameters()) / 1024**3
+    apply_layerwise_casting(
+        text_encoder,
+        storage_dtype=torch.float8_e4m3fn,
+        compute_dtype=torch.bfloat16,
+        skip_modules_pattern=QWEN_TE_FP8_SKIP_MODULES_PATTERN,
+    )
+    n_after = sum(p.numel() * p.element_size() for p in text_encoder.parameters()) / 1024**3
+    print(
+        f"[families.qwen_image] text_encoder fp8 layerwise casting applied "
+        f"(DS_QWEN_TE_QUANT=fp8, パラメータ実サイズ {n_before:.2f}GB -> {n_after:.2f}GB)"
+    )
+
+
 def load_shared_components_locked(small_transformer_active: bool = False) -> None:
     """vae / text_encoder / tokenizer を1回だけロードする(呼び出し側でロック保持前提)。
 
@@ -53,6 +105,12 @@ def load_shared_components_locked(small_transformer_active: bool = False) -> Non
     if state.get_runtime_config().tiled_vae:
         vae.enable_tiling()
         print("[families.qwen_image] shared VAE tiled encode/decode enabled (DS_QWEN_TILED_VAE=1)")
+
+    # text_encoder の fp8 化(DS_QWEN_TE_QUANT=fp8、16GB級カード対応)。
+    # **必ず GPU へ載せる前(CPU 上)に実行すること。** GPU へ載せてからキャストすると、
+    # 一時的に bf16 の約16GB を GPU 上に確保することになり、16GB カードでは
+    # その時点で OOM する(この機能の目的そのものを達成できない)。
+    _apply_te_quant(text_encoder)
 
     if offload_mode == "model_cpu":
         # パイプライン単位の enable_model_cpu_offload() に任せるため、ここでは配置しない。

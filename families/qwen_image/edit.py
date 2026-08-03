@@ -20,7 +20,12 @@ from huggingface_hub import snapshot_download
 from transformers import Qwen2VLProcessor
 
 from core.loaders import fuse_lightning_lora_and_cast_to_fp8, load_transformer_from_config
-from core.optimize import apply_attention_backend, apply_compile, configure_transformer_offload
+from core.optimize import (
+    apply_attention_backend,
+    apply_compile,
+    configure_transformer_offload,
+    suspended_whole_module_swap_offload,
+)
 from core import progress as progress_mod
 from core.resolve import resolve_model_path
 
@@ -199,7 +204,11 @@ def _apply_edit_loras(pipe, gguf_quantized: bool = False) -> None:
     edit_group = state.edit_group
     try:
         path = resolve_model_path(EDIT_LORA_LIGHTNING_PATH, EDIT_LORA_LIGHTNING_HF_REPO, EDIT_LORA_LIGHTNING_HF_FILE)
-        pipe.load_lora_weights(path, adapter_name="lightning")
+        # group_lowvram の text_encoder 手動スワップを一時解除してからロードする
+        # (t2i.py の _apply_t2i_loras() と同じ理由。詳細は
+        # core.optimize.suspended_whole_module_swap_offload() のdocstring参照)。
+        with suspended_whole_module_swap_offload(pipe.text_encoder):
+            pipe.load_lora_weights(path, adapter_name="lightning")
         pipe.disable_lora()  # 既定は無効
         edit_group["lora_available"] = True
     except Exception as e:  # noqa: BLE001

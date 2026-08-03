@@ -42,6 +42,9 @@ class RuntimeConfig:
     DS_LAYERED_QUANT(旧 QWENIMG_LAYERED_QUANT) : "fp8-lightning"(既定)
     DS_QWEN_TILED_VAE              : "1"(既定、共有VAEのencode/decodeを常時tiled化。
                        CLAUDE.md 56番。outpaint等の大キャンバスVAEエンコードOOM対策) / "0"(旧動作)
+    DS_QWEN_TE_QUANT               : "none"(既定、bf16 約16GB)/ "fp8"(共有 text_encoder を
+                       fp8_e4m3fn ストレージ + bf16 compute の layerwise casting で約半分にする。
+                       16GB級カード対応。LTX-2.3 の DS_LTX2_TE_QUANT と同じ機構)
     """
 
     def __init__(self):
@@ -53,13 +56,14 @@ class RuntimeConfig:
         self.t2i_model = env_str("DS_T2I_MODEL", DEFAULT_T2I_MODEL).strip().lower()
         self.layered_quant = env_str("DS_LAYERED_QUANT", LAYERED_DEFAULT_QUANT).strip().lower()
         self.tiled_vae = env_bool("DS_QWEN_TILED_VAE", True)
+        self.te_quant = env_str("DS_QWEN_TE_QUANT", "none").strip().lower()
 
     def __repr__(self):
         return (
             f"RuntimeConfig(offload={self.offload!r}, attention_backend={self.attention_backend!r}, "
             f"compile={self.compile}, device={self.device!r}, quant={self.quant!r}, "
             f"t2i_model={self.t2i_model!r}, layered_quant={self.layered_quant!r}, "
-            f"tiled_vae={self.tiled_vae})"
+            f"tiled_vae={self.tiled_vae}, te_quant={self.te_quant!r})"
         )
 
 

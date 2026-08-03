@@ -32,6 +32,7 @@ offload 自動判定 / attention backend 切替 / torch.compile 適用の共通�
   - torch の import はモジュールトップレベルで行うが、CUDA 初期化を伴う処理(smoke test 等)は
     関数内に閉じ込める。
 """
+import contextlib
 import traceback
 
 import torch
@@ -62,6 +63,8 @@ __all__ = [
     "apply_group_offload_to_transformer",
     "apply_group_offload_to_transformer_full",
     "apply_whole_module_swap_offload",
+    "remove_whole_module_swap_offload",
+    "suspended_whole_module_swap_offload",
     "configure_transformer_offload",
     "configure_shared_offload",
     "apply_flux2_offload",
@@ -296,6 +299,12 @@ def apply_group_offload_to_transformer_full(transformer) -> dict:
     return config
 
 
+# 手動スワップ用フックの保持先(module 属性)。suspended_whole_module_swap_offload() が
+# 一時解除・再適用するために、accelerate の UserCpuOffloadHook と forward hook の
+# RemovableHandle を組にして持っておく。
+_SWAP_OFFLOAD_STATE_ATTR = "_ds_swap_offload_state"
+
+
 def apply_whole_module_swap_offload(module) -> None:
     """module(vae や text_encoder)を使用直前にGPUへ、使用直後にCPUへ丸ごと入れ替える。
 
@@ -310,7 +319,53 @@ def apply_whole_module_swap_offload(module) -> None:
         hook.offload()
         return output
 
-    module.register_forward_hook(_offload_after_forward)
+    handle = module.register_forward_hook(_offload_after_forward)
+    setattr(module, _SWAP_OFFLOAD_STATE_ATTR, (hook, handle))
+
+
+def remove_whole_module_swap_offload(module) -> bool:
+    """apply_whole_module_swap_offload() で付けたフックを完全に取り外す。
+    取り外した場合 True、元々付いていなければ False を返す。
+    """
+    state = getattr(module, _SWAP_OFFLOAD_STATE_ATTR, None)
+    if state is None:
+        return False
+    hook, handle = state
+    handle.remove()          # forward hook(使用後にCPUへ退避する側)
+    hook.remove()            # accelerate 側の _hf_hook(CpuOffload)
+    setattr(module, _SWAP_OFFLOAD_STATE_ATTR, None)
+    return True
+
+
+@contextlib.contextmanager
+def suspended_whole_module_swap_offload(*modules):
+    """指定モジュールの手動スワップ用フックを、ブロックの間だけ取り外す。
+
+    **`pipe.load_lora_weights()` を呼ぶ箇所は必ずこれで包むこと。** 理由(実機で特定):
+    `apply_whole_module_swap_offload()` は accelerate の `cpu_offload_with_hook()` を使うため
+    モジュールに `_hf_hook`(`CpuOffload`)が付く。diffusers の LoRA ローダは
+    `_func_optionally_disable_offloading()`(`loaders/lora_base.py`)でパイプラインの全
+    コンポーネントを走査し、`CpuOffload` を1つでも見つけると **パイプライン全体が
+    `enable_model_cpu_offload()` 済み** と判定する。その結果、
+    1. こちらのスワップ用フックが `remove_hook_from_module()` で勝手に剥がされ、
+    2. LoRA ロード後に `_pipeline.enable_model_cpu_offload()`(`loaders/peft.py`)が呼ばれて
+       transformer を含む全コンポーネントに accelerate のフックが付け直される
+    という2つの副作用が起きる。これが group_lowvram で
+    - 生成時の `Expected all tensors to be on the same device`(TEがCPUに取り残される)
+    - group offload との衝突(`KeyError` / "already applying an alternative offloading strategy")
+    の原因だった(RTX 4000 SFF Ada 20GB で再現・特定)。
+
+    フックを外しておけば `is_model_cpu_offload=False` / `is_group_offload=True` と正しく判定され、
+    diffusers 自身が LoRA ロード後に `_maybe_remove_and_reapply_group_offloading()` で
+    group offload を(設定を保持したまま)再構築してくれる。**そのため group offload は
+    従来どおり LoRA より前に適用してよい**(順序を入れ替える必要はない)。
+    """
+    suspended = [m for m in modules if m is not None and remove_whole_module_swap_offload(m)]
+    try:
+        yield
+    finally:
+        for m in suspended:
+            apply_whole_module_swap_offload(m)
 
 
 def configure_transformer_offload(transformer, offload_mode: str) -> None:
