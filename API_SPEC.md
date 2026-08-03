@@ -1405,12 +1405,14 @@ same." が自動付加される。
 
 ### POST /api/charsheet/jobs/{job_id}/remove_bg
 
-背景除去(rembg / isnet-general-use)。Content-Type: `application/json`。GPU不使用だが
-ジョブの同時1件制約は共有する。
+背景除去(実装は `core/bg.py`)。Content-Type: `application/json`。ジョブの同時1件制約は
+共有する。`rembg` / `anime` は GPU 不使用だが、`birefnet_hr_matting` は既定で GPU を使い
+生成ロックを取得する。
 
 | 名前 | 型 | 必須/任意 | 説明 |
 |---|---|---|---|
 | `key` | string | 必須 | 方向キー、または `"all"`(全方向) |
+| `method` | string | 任意(既定 `rembg`。UIからは `anime` を送る) | `rembg` / `anime` / `birefnet_hr_matting`。値の意味は `POST /api/remove_bg` と同じ |
 
 **レスポンス例**
 
@@ -1549,8 +1551,9 @@ aerial / low_angle / 45度系は高品質で成立するが、**90度回転系�
 
 ## tpose(Tポーズ4ビュー)
 
-1枚のキャラクター画像から **Tポーズ(両腕を水平に広げた姿勢)の4ビュー**
-(正面 / 背面 / 左前45度 / 右前45度)を生成するアプリケーション(2026-07-26追加)。
+1枚のキャラクター画像から **Tポーズ(両腕を水平に広げた姿勢)のマルチビュー**
+(正面 / 背面 / 真横左 / 真横右、および参考出力の左前45度)を生成するアプリケーション
+(2026-07-26追加)。`pose_mode` で Aポーズ・入力ポーズ維持にも切り替えられる。
 `/api/tpose/` 配下。image-3d のマルチビュー入力(Hunyuan3D-2mv)と rig-service の
 自動リグ/VRM化(Tポーズ前提)向け。
 
@@ -1576,7 +1579,8 @@ Content-Type: `multipart/form-data`。
 | `image` | file | 必須 | - | 入力キャラクター画像(全身/胸像どちらでも可。内部で~1MP相当へスケール) |
 | `tail_ref` | file | 任意 | なし | しっぽ形状の参照画像。front以外で2枚目の参照に使う。**非推奨**(顔・毛色まで参照画像側へ引きずられる) |
 | `seed` | int | 任意 | `0` | 0=ビューごとにランダム |
-| `views` | string | 任意 | `""`(=4種全部) | カンマ区切りのビューID。未知IDは400。生成順は定義順に正規化(frontが先) |
+| `views` | string | 任意 | `""`(=5種全部) | カンマ区切りのビューID(`front`/`back`/`left`/`right`/`front_left_45`)。未知IDは400。生成順は定義順に正規化(frontが先) |
+| `pose_mode` | string | 任意 | `"t_pose"` | 生成するポーズ。`t_pose`=両腕を真横へ水平に伸ばすTポーズ(リグ向け)/ `a_pose`=腕を斜め下へ下ろすAポーズ / `keep`=入力画像のポーズを維持してカメラ角度だけ変える。他の値は400 |
 | `subject` | string | 任意 | `"auto"` | 被写体タイプ。`auto`=中立(毛皮/肉球/髪のどの語彙も使わない)/ `animal`=動物・ぬいぐるみ(fur/paws/paw pads)/ `human`=人物・リアルな人形(hair/hands/fingers)。他の値は400 |
 | `palms` | string | 任意 | `"forward"` | `forward` は「手のひらを正面へ向け、その内側全面が見えるように」まで指示する(補強句がないと seed 次第で手が下向きになる実測があったため)。| `forward`(手のひらをカメラへ=リグ用Tポーズの標準)/ `natural`(指示しない)。他の値は400 |
 | `fur_color` | string | 任意 | `""` | 毛色の色名(例 `cream white`)。空なら **`subject` が `animal` に解決されるときだけ**入力画像から自動推定する(人物・中立では推定しない: 服や肌が低彩度な人物キャラでは `cream white` 等に誤推定し、背面の後頭部が白くなる実バグがあった)(rembgで被写体マスクを取り、彩度の低い画素の中央値を色名へ写す)。推定結果はジョブJSONの `fur_color_detected` に入る |
@@ -1587,7 +1591,7 @@ Content-Type: `multipart/form-data`。
 | `costume` | string | 任意 | `""` | **背面から見た衣装**の自由記述(背面ビューのプロンプト末尾にのみ入る)。前開きのベスト・カーディガンが「背中にも前開きで描かれる」問題への対処。**丈・範囲まで書くこと**(例 `the short cream lace bolero ends at the waist and its back is one continuous piece of lace, the white pencil skirt below it is unchanged`。「背中を一枚で覆う」だけだと膝丈のワンピースへ伸びた) |
 | `extra_prompt` | string | 任意 | `""` | プロンプト末尾への追記 |
 | `recolor` | string | 任意 | `""` | 生成後に色を調整する**2パス目のEdit指示**(空なら実行しない)。例 `Make the fur a warmer cream tone with richer shading`。全ビューへ同じ指示を適用し、正面は調整後の画像を後続ビューの参照に使う(色をビュー間で揃えるため)。生成回数が2倍になる |
-| `bg_method` | string | 任意 | `"anime"` | 背景除去の方式(`anime`=アニメ・キャラクター向け / `rembg`=汎用)。Tポーズは被写体がキャラクターのため既定を `anime` にしている(淡い色の毛の取りこぼしが実測 27,232px → 13,733px) |
+| `bg_method` | string | 任意 | `"anime"` | 背景除去の方式(`anime`=アニメ・キャラクター向け / `birefnet_hr_matting`=髪束の隙間・毛先向け高精度マッティング(GPU実行・生成ロックを取得、初回に約444MB取得)/ `rembg`=汎用)。Tポーズは被写体がキャラクターのため既定を `anime` にしている(淡い色の毛の取りこぼしが実測 27,232px → 13,733px) |
 | `remove_bg` | bool | 任意 | `false` | 背景除去(rembg / isnet-general-use)。各ビューの背景透過版 `<key>_nobg.png`(RGBA)を併産する(白背景版はそのまま残る)。生成後・GPUロック解放後にCPUで処理するためGPU待ちなし(1枚1秒前後) |
 
 **レスポンス例**: `{ "job_id": "d3e3ee58a29c" }`
@@ -1774,13 +1778,16 @@ Content-Type: `multipart/form-data`。
 
 ### POST /api/remove_bg
 
-背景削除(GPU不使用・排他不要)。Content-Type: `multipart/form-data`。
+背景削除。Content-Type: `multipart/form-data`。
 実装は `core/bg.py`(charsheet / Tポーズと共通)。
+`rembg` / `anime` は CPU 実行で GPU 排他も不要だが、**`birefnet_hr_matting` は既定で
+GPU(fp16)を使い、推論中は生成系と同じグローバルロックを取得する**ため生成リクエストと
+直列化される(`DS_BIREFNET_DEVICE=cpu` で CPU 実行にできる)。
 
 | 名前 | 型 | 必須/任意 | 説明 |
 |---|---|---|---|
 | `image` | file | 必須 | 入力画像(内部で`RGBA`変換) |
-| `method` | string | 任意(既定 `rembg`) | `rembg`=汎用(rembg / isnet-general-use)/ `anime`=アニメ・キャラクター向け(SkyTNT/anime-segmentation の ISNet、`skytnt/anime-seg` の `isnetis.onnx`、Apache-2.0)。未知の値は既定へフォールバック。レスポンスに実際に使った `method` を含む |
+| `method` | string | 任意(既定 `rembg`) | `rembg`=汎用(rembg / isnet-general-use)/ `anime`=アニメ・キャラクター向け(SkyTNT/anime-segmentation の ISNet、`skytnt/anime-seg` の `isnetis.onnx`、Apache-2.0)/ `birefnet_hr_matting`=髪束の隙間・毛先・レース向けの高精度マッティング(`ZhengPeng7/BiRefNet_HR-matting`、2048px入力、ソフトアルファを保持。初回に約444MBのモデル取得。remote code が `timm` を import する)。未知の値は既定へフォールバック。レスポンスに実際に使った `method` を含む |
 
 **レスポンス例**
 
